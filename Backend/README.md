@@ -29,8 +29,8 @@ The backend is responsible for:
 
 | Technology  | Purpose                |
 | ----------- | ---------------------- |
-| Node.js     | Runtime                |
-| Express.js  | API Framework          |
+| Node.js 20  | Runtime                |
+| Express 4   | API Framework          |
 | TypeScript  | Type Safety            |
 | PostgreSQL  | Primary Database       |
 | Redis       | Caching & Queues       |
@@ -681,14 +681,22 @@ Redis is used for:
 
 ## Prerequisites
 
-- Node.js 18+ 
+- Node.js 20 LTS
 - PostgreSQL 15+
 - Redis 7+
 - Docker (optional, for containerized setup)
 
 ## Install dependencies
 
+A `package-lock.json` is committed alongside `package.json`. Always use it for
+reproducible installs:
+
 ```bash
+# Reproducible install from lockfile (recommended — CI and Docker both use this)
+npm ci
+
+# Only run npm install if you are deliberately adding or updating a dependency,
+# then commit the updated lockfile immediately.
 npm install
 ```
 
@@ -764,6 +772,10 @@ Using Docker Compose (recommended for development):
 ```bash
 docker-compose up -d
 ```
+
+The Dockerfile uses `npm ci` in both build and production stages, which requires
+`package-lock.json` to be present and in sync with `package.json`. The lockfile
+is committed to the repository — never delete or gitignore it.
 
 This will start:
 - The backend application on port 3000
