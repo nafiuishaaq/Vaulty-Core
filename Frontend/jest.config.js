@@ -17,6 +17,9 @@ const config = {
     // Stub CSS / image imports that Jest cannot process
     '\\.(css|less|scss|sass)$': '<rootDir>/src/__mocks__/styleMock.js',
     '\\.(jpg|jpeg|png|gif|svg|webp)$': '<rootDir>/src/__mocks__/fileMock.js',
+    // @stellar/freighter-api uses browser-only globals (window.postMessage, etc.)
+    // and hangs in Node/jsdom. Always replace it with a lightweight manual stub.
+    '^@stellar/freighter-api$': '<rootDir>/src/__mocks__/freighter-api.js',
   },
   setupFilesAfterEnv: ['<rootDir>/src/test-setup.ts'],
   collectCoverageFrom: [
