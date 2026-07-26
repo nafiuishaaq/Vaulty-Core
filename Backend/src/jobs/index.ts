@@ -1,4 +1,9 @@
-import { createWorker, EmailJobData, QUEUE_NAMES } from '../queues';
+import { createWorker, QUEUE_NAMES, queuePaymentProcess } from '../queues';
+import { paymentRepository } from '../repositories/payment.repository';
+import { paymentAuditLogRepository } from '../repositories/payment-audit.repository';
+import { anchorService } from '../services/anchor.service';
+import { transactionService } from '../services/transaction.service';
+import { vaultService } from '../services/vault.service';
 
 // Example job processors - to be expanded as needed
 
@@ -14,7 +19,7 @@ export const streakProcessor = async (job: any) => {
   await new Promise((resolve) => setTimeout(resolve, 1000));
 };
 
-export const emailProcessor = async (job: { id?: string; data: EmailJobData }) => {
+export const emailProcessor = async (job: { id?: string; data: any }) => {
   console.log('Processing email job:', job.id, {
     type: job.data.type,
     to: job.data.to,
@@ -25,18 +30,108 @@ export const emailProcessor = async (job: { id?: string; data: EmailJobData }) =
   await new Promise((resolve) => setTimeout(resolve, 1000));
 };
 
+const AUDIT_ACTIONS = {
+  CREATED: 'CREATED',
+  INITIATED: 'INITIATED',
+  INSTRUCTIONS_SENT: 'INSTRUCTIONS_SENT',
+  PROVIDER_CALLBACK: 'PROVIDER_CALLBACK',
+  CONFIRMED: 'CONFIRMED',
+  SETTLED: 'SETTLED',
+  FAILED: 'FAILED',
+  REVERSED: 'REVERSED',
+  RETRY: 'RETRY',
+  CANCELLED: 'CANCELLED',
+} as const;
+
 export const paymentProcessor = async (job: any) => {
-  console.log('Processing payment job:', job.id, job.data);
-  // TODO: Implement payment processing logic
-  await new Promise((resolve) => setTimeout(resolve, 1000));
+  const { paymentId, type } = job.data;
+  console.log('Processing payment job:', job.id, { paymentId, type });
+
+  const payment = await paymentRepository.findById(paymentId);
+  if (!payment) {
+    console.error(`Payment ${paymentId} not found`);
+    return;
+  }
+
+  if (anchorService.isTerminalStatus(payment.status)) {
+    console.log(`Payment ${paymentId} is in terminal state ${payment.status}, skipping`);
+    return;
+  }
+
+  if (type === 'POLL_STATUS') {
+    try {
+      const status = await anchorService.pollProviderStatus(payment.providerReference || payment.id);
+      const oldStatus = payment.status;
+      const newStatus = anchorService.mapProviderStatusToInternal(status.status);
+
+      if (newStatus !== oldStatus) {
+        await paymentRepository.update(paymentId, { status: newStatus as any });
+
+        const timestampFields: Record<string, string> = {};
+        if (newStatus === 'COMPLETED') {
+          timestampFields.confirmedAt = new Date().toISOString();
+          timestampFields.settledAt = new Date().toISOString();
+        } else if (newStatus === 'FAILED') {
+          timestampFields.failedAt = new Date().toISOString();
+          timestampFields.failureReason = status.failureReason || 'Provider processing failed';
+        } else if (newStatus === 'REVERSED') {
+          timestampFields.reversedAt = new Date().toISOString();
+        }
+
+        await paymentRepository.update(paymentId, timestampFields);
+
+        await paymentAuditLogRepository.create({
+          paymentId,
+          action: AUDIT_ACTIONS.PROVIDER_CALLBACK,
+          oldStatus: oldStatus as any,
+          newStatus: newStatus as any,
+          description: `Provider poll updated status to ${newStatus}`,
+          providerReference: payment.providerReference || undefined,
+          responsePayload: JSON.stringify(status),
+        });
+
+        console.log(`Payment ${paymentId} status updated: ${oldStatus} -> ${newStatus}`);
+
+        if (!anchorService.isTerminalStatus(newStatus)) {
+          await queuePaymentProcess({
+            paymentId,
+            type: 'POLL_STATUS',
+          });
+        }
+      }
+    } catch (error) {
+      console.error(`Failed to poll payment ${paymentId}:`, error);
+      throw error;
+    }
+  }
+};
+
+let workerRegistry: Record<string, any> | null = null;
+
+export const confirmationProcessor = async (job: { id?: string; data: { apiTransactionId: string } }) => {
+  const { apiTransactionId } = job.data;
+  console.log('Processing stellar confirmation job:', job.id, { apiTransactionId });
+  await transactionService.reconcile(apiTransactionId);
+};
+
+export const vaultReconciliationProcessor = async (job: { id?: string; data: { vaultTransactionId: string; type: string } }) => {
+  const { vaultTransactionId, type } = job.data;
+  console.log('Processing vault reconciliation job:', job.id, { vaultTransactionId, type });
+  await vaultService.reconcileVaultTransaction(vaultTransactionId);
 };
 
 // Initialize workers (call this in server.ts after Redis is connected)
 export const initializeWorkers = () => {
+  if (workerRegistry) {
+    return workerRegistry;
+  }
+
   const notificationWorker = createWorker(QUEUE_NAMES.NOTIFICATIONS, notificationProcessor);
   const streakWorker = createWorker(QUEUE_NAMES.STREAK_CALCULATION, streakProcessor);
   const emailWorker = createWorker(QUEUE_NAMES.EMAIL, emailProcessor);
   const paymentWorker = createWorker(QUEUE_NAMES.PAYMENT_PROCESSING, paymentProcessor);
+  const confirmationWorker = createWorker(QUEUE_NAMES.STELLAR_CONFIRMATION, confirmationProcessor);
+  const vaultReconciliationWorker = createWorker(QUEUE_NAMES.VAULT_RECONCILIATION, vaultReconciliationProcessor);
 
   notificationWorker.on('completed', (job) => {
     console.log(`Notification job ${job.id} completed`);
@@ -54,5 +149,42 @@ export const initializeWorkers = () => {
     console.log(`Payment job ${job.id} completed`);
   });
 
-  return { notificationWorker, streakWorker, emailWorker, paymentWorker };
+  paymentWorker.on('failed', (job, err) => {
+    console.error(`Payment job ${job?.id} failed after retries:`, err.message);
+    if (job?.data?.paymentId) {
+      paymentAuditLogRepository.create({
+        paymentId: job.data.paymentId,
+        action: AUDIT_ACTIONS.FAILED,
+        description: `Payment processing job failed permanently: ${err.message}`,
+      }).catch(() => {});
+    }
+  });
+
+  confirmationWorker.on('completed', (job) => {
+    console.log(`Stellar confirmation job ${job.id} completed`);
+  });
+
+  confirmationWorker.on('failed', (job, err) => {
+    console.error(`Stellar confirmation job ${job?.id} failed after retries:`, err.message);
+  });
+
+  vaultReconciliationWorker.on('completed', (job) => {
+    console.log(`Vault reconciliation job ${job.id} completed`);
+  });
+
+  vaultReconciliationWorker.on('failed', (job, err) => {
+    console.error(`Vault reconciliation job ${job?.id} failed after retries:`, err.message);
+  });
+
+  workerRegistry = {
+    notificationWorker,
+    streakWorker,
+    emailWorker,
+    paymentWorker,
+    confirmationWorker,
+    vaultReconciliationWorker,
+  };
+  return workerRegistry;
 };
+
+export const getBootstrappedWorkers = () => workerRegistry;

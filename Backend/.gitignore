@@ -1,6 +1,7 @@
 # Dependencies
 node_modules/
-package-lock.json
+# package-lock.json is intentionally NOT ignored — it is committed for
+# reproducible installs in CI and Docker (npm ci requires it).
 yarn.lock
 
 # Build output

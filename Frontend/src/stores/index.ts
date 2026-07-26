@@ -9,10 +9,13 @@ import {
   WithdrawalOrder,
   PaymentStatus,
   BankAccount,
+  FeatureFlags,
 } from '@/types'
 
 interface AppState {
   wallet: WalletState
+  /** True when the wallet's active network doesn't match the app's configured network. */
+  networkMismatch: boolean
   vaults: Vault[]
   streak: Streak | null
   disciplineScore: DisciplineScore | null
@@ -20,9 +23,11 @@ interface AppState {
   selectedBankAccountId: string | null
   fundingOrders: FundingOrder[]
   withdrawalOrders: WithdrawalOrder[]
+  regulatedFeatures: FeatureFlags
 
   setWalletConnected: (publicKey: string, network: 'testnet' | 'mainnet') => void
   setWalletDisconnected: () => void
+  setNetworkMismatch: (mismatch: boolean) => void
 
   setVaults: (vaults: Vault[]) => void
   addVault: (vault: Vault) => void
@@ -41,6 +46,8 @@ interface AppState {
   addWithdrawalOrder: (order: WithdrawalOrder) => void
   updateWithdrawalOrderStatus: (id: string, status: PaymentStatus, failureReason?: string) => void
   removeWithdrawalOrder: (id: string) => void
+
+  setRegulatedFeatures: (flags: FeatureFlags) => void
 }
 
 export const useAppStore = create<AppState>()(
@@ -51,6 +58,8 @@ export const useAppStore = create<AppState>()(
         publicKey: null,
         network: 'testnet',
       },
+      // Never persisted — re-evaluated on every connection attempt
+      networkMismatch: false,
       vaults: [],
       streak: null,
       disciplineScore: null,
@@ -58,16 +67,27 @@ export const useAppStore = create<AppState>()(
       selectedBankAccountId: null,
       fundingOrders: [],
       withdrawalOrders: [],
+      // Default all regulated features to disabled; updated by useFeatureFlags on mount.
+      regulatedFeatures: {
+        lending: false,
+        borrowing: false,
+        investments: false,
+      },
 
       setWalletConnected: (publicKey, network) =>
         set({
           wallet: { isConnected: true, publicKey, network },
+          networkMismatch: false,
         }),
 
       setWalletDisconnected: () =>
         set({
+          // Clear connection state — never persist wallet credentials
           wallet: { isConnected: false, publicKey: null, network: 'testnet' },
+          networkMismatch: false,
         }),
+
+      setNetworkMismatch: (mismatch) => set({ networkMismatch: mismatch }),
 
       setVaults: (vaults) => set({ vaults }),
 
@@ -138,9 +158,14 @@ export const useAppStore = create<AppState>()(
             (order) => order.id !== id
           ),
         })),
+
+      setRegulatedFeatures: (flags) => set({ regulatedFeatures: flags }),
     }),
     {
       name: 'vaulty-payments',
+      // Wallet state and networkMismatch are intentionally excluded from
+      // persistence — private keys must never be stored, and connection
+      // state must be re-validated on every page load via connectWallet().
       partialize: (state) => ({
         fundingOrders: state.fundingOrders,
         withdrawalOrders: state.withdrawalOrders,

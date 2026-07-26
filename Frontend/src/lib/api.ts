@@ -3,19 +3,37 @@ import {
   FeeInfo,
   ConversionInfo,
   PaymentStatus,
+  FeatureFlags,
 } from '@/types'
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_BACKEND_API_URL || 'http://localhost:8000/api'
+
+// Env-var fallback so the frontend works without a backend connection.
+// Each flag defaults to false (disabled) unless the operator explicitly opts in.
+function envFallbackFlags(): FeatureFlags {
+  return {
+    lending: process.env.NEXT_PUBLIC_ENABLE_LENDING === 'true',
+    borrowing: process.env.NEXT_PUBLIC_ENABLE_BORROWING === 'true',
+    investments: process.env.NEXT_PUBLIC_ENABLE_INVESTMENTS === 'true',
+  }
+}
 
 export class ApiError extends Error {
   constructor(
     message: string,
     public statusCode: number,
+    // Raw response body, kept for programmatic use (e.g. structured validation
+    // errors). May include a `stack` field in backend dev responses — callers
+    // must never render `body` directly in the UI, only `message`/`statusCode`.
     public body?: unknown
   ) {
     super(message)
     this.name = 'ApiError'
   }
+}
+
+export function isApiError(error: unknown): error is ApiError {
+  return error instanceof ApiError
 }
 
 export function generateIdempotencyKey(): string {
@@ -126,6 +144,19 @@ export class ApiClient {
     return this.request(`/withdrawals/${withdrawalId}/retry`, {
       method: 'POST',
     })
+  }
+
+  /**
+   * Load regulated feature availability from the backend.
+   * Falls back to environment-variable defaults when the backend is unavailable,
+   * so local development and CI builds work without a running server.
+   */
+  async getFeatureFlags(): Promise<FeatureFlags> {
+    try {
+      return await this.request<FeatureFlags>('/config/features')
+    } catch {
+      return envFallbackFlags()
+    }
   }
 }
 
