@@ -20,7 +20,7 @@ pub struct StreaksContract;
 const VAULT_CONTRACT_KEY: &[u8; 32] = b"vault_contract_address______\0\0\0\0";
 const AUTHORIZED_CALLERS_KEY: &[u8; 32] = b"authorized_callers__________\0\0\0\0";
 const INITIALIZE_FREEZES: u32 = 3; // Start with 3 freezes for all users
-const DAILY_RESET_HOUR: u64 = 0; // UTC midnight reset
+// const DAILY_RESET_HOUR: u64 = 0; // UTC midnight reset
 
 #[contractimpl]
 impl StreaksContract {

@@ -136,7 +136,7 @@ impl BorrowingContract {
         loan.collateral_amount < required_collateral
     }
 
-    fn derive_loan_id(env: &Env, borrower: &Address, borrow_asset: &BytesN<32>, collateral_asset: &BytesN<32>) -> BytesN<32> {
+    fn derive_loan_id(env: &Env, _borrower: &Address, borrow_asset: &BytesN<32>, collateral_asset: &BytesN<32>) -> BytesN<32> {
         let mut bytes = [0u8; 32];
         let timestamp_bytes = env.ledger().timestamp().to_be_bytes();
         for (index, byte) in timestamp_bytes.iter().enumerate() {
