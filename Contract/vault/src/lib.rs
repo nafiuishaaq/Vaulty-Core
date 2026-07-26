@@ -6,6 +6,10 @@ use soroban_sdk::{
 use shared::{
     errors::Error,
     events::{DepositMade, VaultCreated, VaultUnlocked, WithdrawalCompleted},
+    contract, contracterror, contractimpl, contracttype, Address, BytesN, Env, Map, IntoVal, Symbol, Vec,
+};
+use shared::{
+    errors::Error,
     types::{Asset, VaultMetadata, VaultStatus},
     utils::{SafeMath, TimeHelper, ValidationHelper},
 };
@@ -13,6 +17,9 @@ use shared::{
 /// Vault contract for managing savings vaults with time-locked deposits
 #[contract]
 pub struct VaultContract;
+
+#[cfg(test)]
+pub use VaultContract;
 
 /// Storage keys - initialized at runtime
 fn vaults_key(env: &Env) -> BytesN<32> {
@@ -27,12 +34,52 @@ fn vault_counter_key(env: &Env) -> BytesN<32> {
     BytesN::from_array(env, &[2u8; 32])
 }
 
+fn streaks_contract_key(env: &Env) -> BytesN<32> {
+    BytesN::from_array(env, &[3u8; 32])
+}
+
+fn rewards_contract_key(env: &Env) -> BytesN<32> {
+    BytesN::from_array(env, &[4u8; 32])
+}
+
 #[contracttype]
 #[derive(Clone)]
 pub struct VaultId(BytesN<32>);
 
 #[contractimpl]
 impl VaultContract {
+    /// Initialize the vault contract with linked streaks and rewards contracts
+    /// Can only be called once
+    pub fn initialize(env: Env, streaks_contract: Address, rewards_contract: Address) {
+        // Check if already initialized
+        let streaks_key = streaks_contract_key(&env);
+        if env.storage().instance().has(&streaks_key) {
+            panic!("{:?}", Error::AlreadyInitialized);
+        }
+
+        // Store the contract addresses
+        env.storage().instance().set(&streaks_key, &streaks_contract);
+        let rewards_key = rewards_contract_key(&env);
+        env.storage().instance().set(&rewards_key, &rewards_contract);
+    }
+
+    /// Add streaks contract as an authorized caller in the streaks contract
+    /// (Called during setup)
+    pub fn register_with_streaks(env: Env) {
+        let streaks_key = streaks_contract_key(&env);
+        let streaks_contract: Address = env.storage().instance().get(&streaks_key).expect("Streaks contract not initialized");
+
+        let mut args = Vec::new(&env);
+        args.push_back(env.current_contract_address().into_val(&env));
+
+        // Invoke add_authorized_caller on streaks contract to add vault as authorized
+        env.invoke_contract::<()>(
+            &streaks_contract,
+            &Symbol::new(&env, "add_authorized_caller"),
+            args,
+        );
+    }
+
     /// Create a new vault with the specified asset and lock period
     ///
     /// # Arguments
@@ -73,6 +120,8 @@ impl VaultContract {
         let asset = Asset {
             token: token_contract,
             symbol: symbol.clone(),
+            code: asset_code.clone(),
+            issuer: asset_issuer.unwrap_or_else(|| owner.clone()),
         };
 
         let metadata = VaultMetadata {
@@ -109,6 +158,7 @@ impl VaultContract {
                 asset: symbol.clone(),
                 lock_period,
             },),
+            (vault_id_bytes.clone(), owner, asset_code, lock_period),
             (),
         );
 
@@ -144,6 +194,8 @@ impl VaultContract {
 
         let token_client = token::Client::new(&env, &metadata.asset.token);
         token_client.transfer(&from, &env.current_contract_address(), &amount);
+        let vaults_map: Map<VaultId, VaultMetadata> = env.storage().persistent().get(&vaults_key).expect("Vault not found");
+        let metadata = vaults_map.get(vault_id.clone()).expect("Vault not found");
 
         let balances_key = balances_key(&env);
         let mut balances_map: Map<VaultId, i128> = env
@@ -167,6 +219,54 @@ impl VaultContract {
                 amount,
             },),
             (),
+        // Update user's streak in streaks contract if it's initialized
+        let streaks_key = streaks_contract_key(&env);
+        if let Some(streaks_contract) = env.storage().instance().get::<BytesN<32>, Address>(&streaks_key) {
+            // Call update_streak on the streaks contract
+            // This will panic if called twice in the same day, but that's okay - it prevents duplicate streak increments
+            let mut args = Vec::new(&env);
+            args.push_back(metadata.owner.clone().into_val(&env));
+            let result = env.try_invoke_contract::<(), shared::errors::Error>(
+                &streaks_contract,
+                &Symbol::new(&env, "update_streak"),
+                args,
+            );
+            // If the call succeeds, also try to notify rewards contract if a milestone was reached
+            if result.is_ok() {
+                // Get the updated streak count
+                let mut get_streak_args = Vec::new(&env);
+                get_streak_args.push_back(metadata.owner.clone().into_val(&env));
+                let streak_count: u32 = env.invoke_contract(
+                    &streaks_contract,
+                    &Symbol::new(&env, "get_streak"),
+                    get_streak_args,
+                );
+
+                // Call rewards contract to check for milestones
+                let rewards_key = rewards_contract_key(&env);
+                if let Some(rewards_contract) = env.storage().instance().get::<BytesN<32>, Address>(&rewards_key) {
+                    // Invoke grant_reward which will check if any milestones are met
+                    let mut grant_args = Vec::new(&env);
+                    grant_args.push_back(metadata.owner.clone().into_val(&env));
+                    grant_args.push_back(streak_count.into_val(&env));
+                    let _ = env.try_invoke_contract::<(), shared::errors::Error>(
+                        &rewards_contract,
+                        &Symbol::new(&env, "grant_reward"),
+                        grant_args,
+                    );
+                }
+            }
+        }
+
+        // Emit deposit event using shared event type
+        use shared::events::DepositMade;
+        env.events().publish(
+            ("deposit_made", from.clone()),
+            DepositMade {
+                vault_id: vault_id.0.clone(),
+                depositor: from.clone(),
+                amount,
+            }
         );
     }
 
@@ -211,6 +311,7 @@ impl VaultContract {
                     asset: metadata.asset.symbol.clone(),
                     unlock_time: metadata.unlock_time,
                 },),
+                (vault_id.0.clone(), metadata.unlock_time),
                 (),
             );
         }
@@ -241,6 +342,7 @@ impl VaultContract {
                 asset: metadata.asset.symbol,
                 amount,
             },),
+            (vault_id.0.clone(), to, amount),
             (),
         );
     }
