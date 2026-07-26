@@ -3,6 +3,8 @@ use lending::LendingContract;
 use shared::errors::Error;
 use shared::types::PoolAccounting;
 
+const WASM: &[u8] = lending::WASM;
+
 #[test]
 fn test_pool_creation() {
     let env = Env::default();
@@ -497,4 +499,8 @@ impl<'a> LendingContractClient<'a> {
     fn update_debt(&self, pool_id: &BytesN<32>, debt_change: &i128) {
         LendingContract::update_debt(self.env.clone(), pool_id.clone(), *debt_change).unwrap();
     }
+    let _contract_id = env.register_contract_wasm(None, lending::WASM);
+    
+    // Placeholder test to ensure crate compiles
+    // TODO: Add actual tests when lending logic is implemented
 }
