@@ -7,6 +7,7 @@ import { usePaymentStatus } from '@/hooks/usePaymentStatus'
 import { VaultList } from '@/features/vaults'
 import { VaultDetail } from '@/features/vaults'
 import { CreateVault } from '@/features/vaults'
+import { StreakTracker, StreakCalendar } from '@/features/streaks'
 import { Vault } from '@/types'
 
 type ViewState =
@@ -91,6 +92,14 @@ export default function Home() {
           </button>
         )}
       </div>
+
+      {/* Streak tracking section */}
+      {wallet.isConnected && (
+        <div className="mb-8 grid gap-6 md:grid-cols-2">
+          <StreakTracker />
+          <StreakCalendar />
+        </div>
+      )}
 
       {/* Render Views */}
       {view.type === 'list' && <VaultList />}
