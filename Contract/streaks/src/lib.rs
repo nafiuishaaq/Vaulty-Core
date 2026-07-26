@@ -284,3 +284,8 @@ impl StreaksContract {
         env.storage().persistent().set(&key, &streaks);
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+}

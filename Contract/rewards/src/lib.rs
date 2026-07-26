@@ -16,6 +16,9 @@ use shared::{
 #[contract]
 pub struct RewardsContract;
 
+#[cfg(test)]
+pub use RewardsContract;
+
 // Storage key constants
 const STREAKS_CONTRACT_KEY: &[u8; 32] = b"streaks_contract_address___\0\0\0\0\0";
 const MILESTONES_KEY: &[u8; 32] = b"registered_milestones_____\0\0\0\0\0\0";

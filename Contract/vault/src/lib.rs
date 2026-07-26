@@ -12,6 +12,9 @@ use shared::{
 #[contract]
 pub struct VaultContract;
 
+#[cfg(test)]
+pub use VaultContract;
+
 /// Storage keys - initialized at runtime
 fn vaults_key(env: &Env) -> BytesN<32> {
     BytesN::from_array(env, &[0u8; 32])
@@ -122,7 +125,7 @@ impl VaultContract {
         let unlock_time = now.checked_add(lock_period).unwrap();
         let asset = Asset {
             code: asset_code.clone(),
-            issuer: asset_issuer,
+            issuer: asset_issuer.unwrap_or_else(|| owner.clone()),
         };
 
         let metadata = VaultMetadata {

@@ -10,9 +10,12 @@ use shared::{
 #[contract]
 pub struct LendingContract;
 
+#[cfg(test)]
+pub use LendingContract;
+
 #[contractimpl]
 impl LendingContract {
-    pub fn create_pool(env: Env, asset: BytesN<32>, interest_rate_bps: i128) -> LendingPool {
+    pub fn create_pool(env: Env, admin: Address, asset: BytesN<32>, interest_rate_bps: i128) -> LendingPool {
         if interest_rate_bps <= 0 || interest_rate_bps > 10_000 {
             panic!("{:?}", Error::InvalidInterestRate);
         }
@@ -25,7 +28,7 @@ impl LendingContract {
 
         let pool = LendingPool {
             pool_id: pool_id.clone(),
-            asset: Asset { code: asset.clone(), issuer: None },
+            asset: Asset { code: asset.clone(), issuer: admin.clone() },
             interest_rate_bps: interest_rate_bps as u32,
             total_deposits: 0,
             total_shares: 0,

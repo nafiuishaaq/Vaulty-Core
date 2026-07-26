@@ -10,6 +10,9 @@ use shared::{
 #[contract]
 pub struct BorrowingContract;
 
+#[cfg(test)]
+pub use BorrowingContract;
+
 const COLLATERAL_RATIO_BPS: u32 = 15_000;
 
 #[contractimpl]
@@ -45,9 +48,9 @@ impl BorrowingContract {
         let loan = Loan {
             loan_id: loan_id.clone(),
             borrower: borrower.clone(),
-            collateral_asset: Asset { code: collateral_asset, issuer: None },
+            collateral_asset: Asset { code: collateral_asset, issuer: borrower.clone() },
             collateral_amount,
-            borrow_asset: Asset { code: borrow_asset, issuer: None },
+            borrow_asset: Asset { code: borrow_asset, issuer: borrower.clone() },
             borrow_amount,
             outstanding_amount: borrow_amount,
             interest_rate_bps: 0,

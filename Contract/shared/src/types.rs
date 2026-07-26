@@ -16,7 +16,7 @@ pub enum VaultStatus {
 #[contracttype]
 pub struct Asset {
     pub code: BytesN<32>,
-    pub issuer: Option<Address>,
+    pub issuer: Address,
 }
 
 /// Vault metadata containing lock period and other configuration
