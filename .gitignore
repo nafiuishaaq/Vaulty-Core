@@ -1,6 +1,6 @@
 # Backend dependencies
 Backend/node_modules/
-Backend/package-lock.json
+# Backend/package-lock.json is intentionally NOT ignored — committed for reproducible installs
 Backend/yarn.lock
 
 # Frontend dependencies
@@ -9,7 +9,7 @@ Frontend/.next/
 Frontend/out/
 Frontend/.env.local
 Frontend/.env
-Frontend/package-lock.json
+# Frontend/package-lock.json is intentionally NOT ignored — committed for reproducible installs
 
 # IDE
 .vscode/
@@ -21,3 +21,4 @@ Frontend/package-lock.json
 # OS
 .DS_Store
 Thumbs.db
+CLAUDE.md

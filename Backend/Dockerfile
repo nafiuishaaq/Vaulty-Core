@@ -1,48 +1,47 @@
 # Stage 1: Build
-FROM node:18-alpine AS builder
+FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Copy package files
-COPY package*.json ./
+# Copy lockfile and manifest first so Docker can cache the install layer.
+# Both package.json AND package-lock.json must be present; npm ci enforces
+# the lockfile for a bit-for-bit reproducible install.
+COPY package.json package-lock.json ./
 COPY prisma ./prisma/
 
-# Install dependencies
+# Clean install from lockfile — fails if lockfile is out of sync with package.json
 RUN npm ci
 
 # Generate Prisma client
 RUN npx prisma generate
 
-# Copy source code
+# Copy source and build
 COPY . .
-
-# Build TypeScript
 RUN npm run build
 
-# Stage 2: Production
-FROM node:18-alpine AS production
+# Stage 2: Production image
+FROM node:20-alpine AS production
 
 WORKDIR /app
 
-# Ensures src/config validates strictly and refuses to start with missing or
-# default secrets/URLs - real values must be injected at deploy time.
+# Ensures config validates strictly and refuses to start with missing or
+# default secrets/URLs — real values must be injected at deploy time.
 ENV NODE_ENV=production
 
-# Copy package files
-COPY package*.json ./
+# Copy manifest + lockfile so npm ci can reproduce the exact dep tree
+COPY package.json package-lock.json ./
 
-# Install production dependencies only
-RUN npm ci --only=production
+# --omit=dev installs only production dependencies (replaces deprecated --only=production)
+RUN npm ci --omit=dev
 
-# Copy Prisma files and generated client
+# Copy Prisma schema and the generated client built in stage 1
 COPY prisma ./prisma/
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 
-# Copy built application
+# Copy compiled application
 COPY --from=builder /app/dist ./dist
 
-# Expose port
 EXPOSE 3000
 
-# Start application
-CMD ["node", "dist/server.js"]
+# Support both API mode (default) and worker mode via APP_MODE env var
+CMD ["sh", "-c", "if [ \"$APP_MODE\" = \"worker\" ]; then node dist/server.js --worker; else node dist/server.js; fi"]

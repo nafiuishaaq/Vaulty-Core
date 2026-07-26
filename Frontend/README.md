@@ -21,14 +21,15 @@ The current codebase is a **Phase 1 scaffold**. The following are wired up and f
 | `useWallet` hook (connect / disconnect flow + error states) | ✅ Implemented |
 | `useVault` hook (create / deposit / withdraw against local state) | ✅ Implemented |
 | `ApiClient` (`src/lib/api.ts`) — fiat deposit/withdrawal via backend | ✅ Implemented |
-| `WalletManager` (`src/lib/stellar.ts`) — scaffold with stubs | ✅ Scaffold only — wallet connection and transaction signing throw `"not yet implemented"` |
+| `WalletManager` (`src/lib/stellar.ts`) — Freighter wallet integration | ✅ Implemented — connect, sign, disconnect, account-change & network-change events |
+| `WalletButton` (`src/components/WalletButton.tsx`) — connect/disconnect UI | ✅ Implemented — shows truncated key, network-mismatch banner, error recovery hints |
 | Jest + Testing Library unit tests | ✅ Implemented |
 
 ### Roadmap features (not yet implemented)
 
 The following features exist as structural placeholders (empty feature folders, type definitions, or stub functions). They are **not functional in the current build** and should remain gated by feature flags before release:
 
-- Actual Stellar wallet connection (requires a Stellar-compatible wallet SDK integration)
+- ~~Actual Stellar wallet connection~~ — **Implemented** via `@stellar/freighter-api`
 - On-chain Soroban contract calls for vault creation, deposits, and streak verification
 - Nigerian bank deposit / withdrawal via anchor partner (backend integration in progress)
 - Yield vaults, lending marketplace, borrow-against-savings, investment portfolios
@@ -48,7 +49,7 @@ See the root `README.md` Roadmap section for the phase-by-phase delivery plan.
 | Framework | Next.js 14 (App Router) |
 | UI Library | React 18 |
 | Styling | Tailwind CSS |
-| Wallet / Chain | `@stellar/stellar-sdk` (scaffold — not yet connected) |
+| Wallet / Chain | `@stellar/stellar-sdk` + `@stellar/freighter-api` |
 | State Management | Zustand |
 | Language | TypeScript |
 | Testing | Jest + ts-jest + Testing Library |
@@ -204,15 +205,38 @@ Coverage output is written to `Frontend/coverage/`. The report covers:
 
 ## Wallet & Chain Interaction
 
-The frontend is designed to integrate with the Stellar network through:
+The frontend integrates with the Stellar network through the **Freighter** browser wallet extension.
 
-- Wallet connection via a Stellar-compatible wallet (stub in `src/lib/stellar.ts` — not yet connected)
-- Read calls to Soroban contracts for vault state, streak verification, and yield data (not yet implemented)
-- User-signed transactions for deposits, withdrawals, lending, borrowing, and vault creation (not yet implemented)
+### Connection flow
 
-No private keys or signing authority touch frontend state — all signing will happen client-side via the user's connected wallet.
+1. User clicks **Connect Wallet** in the top-right header.
+2. `WalletManager.connectWallet()` checks that Freighter is installed and requests access.
+3. The wallet's active network is validated against `NEXT_PUBLIC_STELLAR_NETWORK` — mismatches are blocked immediately.
+4. On success the public key is returned and stored in Zustand. **The private key never leaves Freighter.**
 
-Fiat flows (Nigerian bank deposit/withdrawal) go through the backend's anchor-integration module. The frontend calls the backend via `ApiClient` in `src/lib/api.ts` — it never talks to the anchor partner directly.
+### Signing flow
+
+1. The app builds an unsigned Stellar transaction XDR string.
+2. `WalletManager.signTransaction(xdr)` re-validates the network, then forwards the XDR to Freighter.
+3. The user approves (or rejects) in the Freighter extension UI.
+4. The signed XDR is returned. **No signing secret touches app state.**
+
+### Event handling
+
+| Event | Source | App response |
+|---|---|---|
+| User rejects connect prompt | `WalletUserRejectedError` | Shows recovery copy, does not crash |
+| User rejects sign prompt | `WalletUserRejectedError` | Shows rejection message |
+| Account changed in Freighter | `window` message → `onAccountChange` | Updates store / disconnects |
+| Network changed in Freighter | `window` message → `onNetworkChange` | Disconnects + shows mismatch banner |
+| Freighter not installed | `WalletConnectionError` | Shows install link |
+
+### Security constraints
+
+- Wallet state (`publicKey`, `network`) is **never persisted** to `localStorage` — the `partialize` function in the Zustand store explicitly excludes it.
+- `NEXT_PUBLIC_*` variables are public by design; **no secrets** belong there.
+- Network is validated before every contract action via `_assertNetwork()`.
+
 
 ---
 
@@ -222,3 +246,43 @@ Fiat flows (Nigerian bank deposit/withdrawal) go through the backend's anchor-in
 - Feature modules in `src/features/lending/`, `src/features/borrowing/`, and `src/features/investments/` are structural scaffolds. Keep them **gated by feature flags** (`NEXT_PUBLIC_ENABLE_LENDING` etc.) in production builds until Phase 3.
 - Yield, APY, and interest figures displayed in the UI must be sourced from on-chain contract data once integration is implemented — never hardcode or cache these values on the backend to preserve the "verifiable on-chain" differentiator.
 - Shared types between frontend and backend live in `src/types/` for now. If the API surface grows significantly, consider moving them to a shared `packages/shared-types` workspace.
+
+---
+
+## Regulated Feature Gates
+
+Lending, borrowing, and investment features are gated at both the route and component level. All three default to **disabled** and must be explicitly enabled by the backend or environment.
+
+### How it works
+
+| Layer | File | Behaviour |
+|---|---|---|
+| API | `src/lib/api.ts` — `getFeatureFlags()` | Loads availability from `GET /config/features`. Falls back to env vars on error. |
+| Store | `src/stores/index.ts` — `regulatedFeatures` | Single source of truth. Updated on mount by `useFeatureFlags`. |
+| Hook | `src/hooks/useFeatureFlags.ts` | Calls the API once on mount, writes result to store, returns current flags. |
+| Route pages | `src/app/lending/`, `src/app/borrowing/`, `src/app/investments/` | Call `useFeatureFlags` at the route boundary to trigger the flag load. |
+| Feature components | `src/features/lending/`, `src/features/borrowing/`, `src/features/investments/` | Read `regulatedFeatures` from store; show a compliant unavailability message when the flag is `false`. |
+
+### Compliance rules enforced when a feature is disabled
+
+- No APY, estimated returns, yield projections, or investment performance figures are displayed.
+- Users see a clear, non-misleading message: **"This feature is not yet available in your region."**
+- A secondary note advises that eligibility verification or compliance review is required.
+
+### Enabling a feature
+
+**Via environment variable** (local development / CI without a backend):
+
+```env
+NEXT_PUBLIC_ENABLE_LENDING=true
+NEXT_PUBLIC_ENABLE_BORROWING=true
+NEXT_PUBLIC_ENABLE_INVESTMENTS=true
+```
+
+**Via backend** (production): The backend `GET /config/features` endpoint returns a JSON object:
+
+```json
+{ "lending": true, "borrowing": false, "investments": false }
+```
+
+The frontend prefers the backend response. Env vars are only the fallback.
