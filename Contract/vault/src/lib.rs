@@ -7,6 +7,12 @@ use shared::{
     events::{VaultCreated, VaultUnlocked},
     types::{Asset, VaultMetadata, VaultStatus, EmergencyStop, RateLimit, Role, Permission},
     utils::{SafeMath, TimeHelper, ValidationHelper, FixedMath},
+    token,
+    contract, contractimpl, contracttype, Address, BytesN, Env, Map,
+};
+use shared::{
+    errors::Error,
+    events::{DepositMade, VaultCreated, VaultUnlocked, WithdrawalCompleted},
     contract, contracterror, contractimpl, contracttype, Address, BytesN, Env, Map, IntoVal, Symbol, Vec,
 };
 use shared::{
@@ -65,13 +71,6 @@ fn rewards_contract_key(env: &Env) -> BytesN<32> {
 #[derive(Clone)]
 pub struct VaultId(BytesN<32>);
 
-#[contracterror]
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(u32)]
-pub enum VaultError {
-    InvalidVaultId = 100,
-}
-
 #[contractimpl]
 impl VaultContract {
     /// Initialize the vault contract with linked streaks and rewards contracts
@@ -110,23 +109,20 @@ impl VaultContract {
     ///
     /// # Arguments
     /// * `owner` - The address that will own this vault
-    /// * `asset_code` - The asset code for deposits (32-byte identifier)
-    /// * `asset_issuer` - Optional issuer address for the asset
+    /// * `token_contract` - The token contract address for asset identity
+    /// * `symbol` - Human-readable asset symbol for indexing
     /// * `lock_period` - Lock period in seconds (min 1, max 5 years)
     ///
     /// # Returns
     /// The unique vault ID
-    ///
-    /// # Events
-    /// Emits `VaultCreated` event
     ///
     /// # Auth
     /// Requires authorization from the owner
     pub fn create_vault(
         env: Env,
         owner: Address,
-        asset_code: BytesN<32>,
-        asset_issuer: Option<Address>,
+        token_contract: Address,
+        symbol: BytesN<32>,
         lock_period: u64,
     ) -> Result<VaultId, Error> {
         owner.require_auth();
@@ -171,14 +167,25 @@ impl VaultContract {
         let counter: u64 = env.storage().persistent().get(&counter_key).unwrap_or(0);
         let new_counter = counter.checked_add(1).ok_or(Error::Overflow)?;
         env.storage().persistent().set(&counter_key, &new_counter);
+        if !ValidationHelper::validate_lock_period(lock_period) {
+            panic!("{:?}", Error::InvalidLockPeriod);
+        }
+
+        let counter_key = vault_counter_key(&env);
+        let counter: u64 = env.storage().instance().get(&counter_key).unwrap_or(0);
+        let new_counter = counter.checked_add(1).unwrap();
+        env.storage().instance().set(&counter_key, &new_counter);
 
         let vault_id_bytes = Self::generate_vault_id(&env, new_counter);
         let vault_id = VaultId(vault_id_bytes.clone());
 
-        // Create vault metadata
         let now = TimeHelper::now(&env);
         let unlock_time = now.checked_add(lock_period).ok_or(Error::Overflow)?;
+        let unlock_time = now.checked_add(lock_period).unwrap();
+
         let asset = Asset {
+            token: token_contract,
+            symbol: symbol.clone(),
             code: asset_code.clone(),
             issuer: asset_issuer,
             issuer: asset_issuer.unwrap_or_else(|| owner.clone()),
@@ -214,8 +221,24 @@ impl VaultContract {
         env.storage()
             .persistent()
             .set(&user_vaults_key, &updated_user_vaults);
+        let vaults_key = vaults_key(&env);
+        let mut vaults_map: Map<VaultId, VaultMetadata> = env
+            .storage()
+            .persistent()
+            .get(&vaults_key)
+            .unwrap_or_else(|| Map::new(&env));
+        vaults_map.set(vault_id.clone(), metadata);
+        env.storage().persistent().set(&vaults_key, &vaults_map);
 
-        // Emit event
+        let balances_key = balances_key(&env);
+        let mut balances_map: Map<VaultId, i128> = env
+            .storage()
+            .persistent()
+            .get(&balances_key)
+            .unwrap_or_else(|| Map::new(&env));
+        balances_map.set(vault_id.clone(), 0i128);
+        env.storage().persistent().set(&balances_key, &balances_map);
+
         env.events().publish(
             (VaultCreated::topic(&env), vault_id_bytes.clone()),
             VaultCreated {
@@ -224,6 +247,12 @@ impl VaultContract {
                 asset: asset_code.clone(),
                 lock_period,
             },
+            (VaultCreated {
+                vault_id: vault_id_bytes,
+                owner,
+                asset: symbol.clone(),
+                lock_period,
+            },),
             (vault_id_bytes.clone(), owner, asset_code, lock_period),
             (),
         );
@@ -231,15 +260,15 @@ impl VaultContract {
         Ok(vault_id)
     }
 
-    /// Deposit funds into a vault
+    /// Deposit tokens into a vault
+    ///
+    /// Transfers tokens from the depositor to the vault contract before updating the internal balance.
+    /// If the token transfer fails, the state is reverted automatically.
     ///
     /// # Arguments
     /// * `vault_id` - The vault to deposit into
     /// * `from` - The address depositing funds
     /// * `amount` - The amount to deposit (must be positive)
-    ///
-    /// # Events
-    /// Emits `DepositMade` event
     ///
     /// # Auth
     /// Requires authorization from the depositor
@@ -263,7 +292,20 @@ impl VaultContract {
 
         // Accrue interest before deposit
         Self::accrue_interest(env.clone(), vault_id.clone())?;
+        if !ValidationHelper::validate_positive_amount(amount) {
+            panic!("{:?}", Error::InvalidAmount);
+        }
+
         let vaults_key = vaults_key(&env);
+        let vaults_map: Map<VaultId, VaultMetadata> = env
+            .storage()
+            .persistent()
+            .get(&vaults_key)
+            .expect("Vault not found");
+        let metadata = vaults_map.get(vault_id.clone()).expect("Vault not found");
+
+        let token_client = token::Client::new(&env, &metadata.asset.token);
+        token_client.transfer(&from, &env.current_contract_address(), &amount);
         let vaults_map: Map<VaultId, VaultMetadata> = env.storage().persistent().get(&vaults_key).expect("Vault not found");
         let metadata = vaults_map.get(vault_id.clone()).expect("Vault not found");
 
@@ -277,7 +319,28 @@ impl VaultContract {
         env.storage()
             .persistent()
             .set(&VaultKey::Balance(vault_id.clone()), &new_balance);
+        let balances_key = balances_key(&env);
+        let mut balances_map: Map<VaultId, i128> = env
+            .storage()
+            .persistent()
+            .get(&balances_key)
+            .expect("Balance not found");
+        let current_balance = balances_map.get(vault_id.clone()).expect("Balance not found");
 
+        let new_balance: i128 = SafeMath::add(current_balance, amount as i128)
+            .expect("Overflow");
+
+        balances_map.set(vault_id.clone(), new_balance);
+        env.storage().persistent().set(&balances_key, &balances_map);
+
+        env.events().publish(
+            (DepositMade {
+                vault_id: vault_id.0.clone(),
+                depositor: from,
+                asset: metadata.asset.symbol,
+                amount,
+            },),
+            (),
         // Update user's streak in streaks contract if it's initialized
         let streaks_key = streaks_contract_key(&env);
         if let Some(streaks_contract) = env.storage().instance().get::<BytesN<32>, Address>(&streaks_key) {
@@ -337,15 +400,15 @@ impl VaultContract {
         Ok(())
     }
 
-    /// Withdraw funds from a vault (only after lock period expires)
+    /// Withdraw tokens from a vault (only after lock period expires)
+    ///
+    /// Checks ownership and lock period before transferring tokens.
+    /// Transfers tokens from vault custody to the recipient only after checks pass.
     ///
     /// # Arguments
     /// * `vault_id` - The vault to withdraw from
     /// * `to` - The address to receive funds
     /// * `amount` - The amount to withdraw (must be positive and <= balance)
-    ///
-    /// # Events
-    /// Emits `WithdrawalCompleted` event
     ///
     /// # Auth
     /// Requires authorization from the vault owner
@@ -356,8 +419,15 @@ impl VaultContract {
             .persistent()
             .get(&VaultKey::Vault(vault_id.clone()))
             .ok_or(Error::VaultNotFound)?;
+    pub fn withdraw(env: Env, vault_id: VaultId, to: Address, amount: i128) {
+        let vaults_key = vaults_key(&env);
+        let mut vaults_map: Map<VaultId, VaultMetadata> = env
+            .storage()
+            .persistent()
+            .get(&vaults_key)
+            .expect("Vault not found");
+        let mut metadata = vaults_map.get(vault_id.clone()).expect("Vault not found");
 
-        // Authorize vault owner
         metadata.owner.require_auth();
 
         // Check emergency stop
@@ -375,42 +445,49 @@ impl VaultContract {
         if metadata.status == VaultStatus::Locked {
             if !TimeHelper::is_past(&env, metadata.unlock_time) {
                 return Err(Error::VaultLocked);
+        if !ValidationHelper::validate_positive_amount(amount) {
+            panic!("{:?}", Error::InvalidAmount);
+        }
+
+        if metadata.status == VaultStatus::Locked {
+            if !TimeHelper::is_past(&env, metadata.unlock_time) {
+                panic!("{:?}", Error::VaultLocked);
             }
-            // Unlock the vault
             metadata.status = VaultStatus::Unlocked;
             env.storage()
                 .persistent()
                 .set(&VaultKey::Vault(vault_id.clone()), &metadata.clone());
 
-            // Emit unlock event
             env.events().publish(
-                (VaultUnlocked::topic(&env), vault_id.0.clone()),
-                VaultUnlocked {
+                (VaultUnlocked {
                     vault_id: vault_id.0.clone(),
+                    asset: metadata.asset.symbol.clone(),
                     unlock_time: metadata.unlock_time,
-                },
+                },),
                 (vault_id.0.clone(), metadata.unlock_time),
                 (),
             );
         }
 
-        // Check balance
-        let current_balance: i128 = env
+        let balances_key = balances_key(&env);
+        let mut balances_map: Map<VaultId, i128> = env
             .storage()
             .persistent()
-            .get(&VaultKey::Balance(vault_id.clone()))
-            .ok_or(Error::VaultNotFound)?;
+            .get(&balances_key)
+            .expect("Balance not found");
+        let current_balance = balances_map.get(vault_id.clone()).expect("Balance not found");
         if amount > current_balance {
-            return Err(Error::InsufficientBalance);
+            panic!("{:?}", Error::InsufficientBalance);
         }
 
-        // Update balance using safe arithmetic
-        let new_balance = SafeMath::sub(current_balance, amount).ok_or(Error::Underflow)?;
-        env.storage()
-            .persistent()
-            .set(&VaultKey::Balance(vault_id.clone()), &new_balance);
+        let new_balance: i128 = SafeMath::sub(current_balance, amount as i128)
+            .expect("Underflow");
+        balances_map.set(vault_id.clone(), new_balance);
+        env.storage().persistent().set(&balances_key, &balances_map);
 
-        // Emit event
+        let token_client = token::Client::new(&env, &metadata.asset.token);
+        token_client.transfer(&env.current_contract_address(), &to, &amount);
+
         env.events().publish(
             (shared::events::WithdrawalCompleted::topic(&env), vault_id.0.clone()),
             shared::events::WithdrawalCompleted {
