@@ -1,7 +1,9 @@
+use soroban_sdk::{Address, BytesN, contracttype};
 use soroban_sdk::{Address, BytesN, Env, IntoVal, Val};
 
-/// Event emitted when a new vault is created
+/// Event emitted when a vault is created
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[contracttype]
 pub struct VaultCreated {
     pub vault_id: BytesN<32>,
     pub owner: Address,
@@ -9,6 +11,17 @@ pub struct VaultCreated {
     pub lock_period: u64,
 }
 
+/// Operation type for vault custody events
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[contracttype]
+#[repr(u32)]
+pub enum OperationType {
+    Deposit = 0,
+    Withdrawal = 1,
+    Unlock = 2,
+}
+
+/// Event emitted when funds are deposited into a vault
 impl IntoVal<Env, Val> for VaultCreated {
     fn into_val(&self, env: &Env) -> Val {
         (self.vault_id.clone(), self.owner.clone(), self.asset.clone(), self.lock_period).into_val(env)
@@ -17,12 +30,15 @@ impl IntoVal<Env, Val> for VaultCreated {
 
 /// Event emitted when a deposit is made to a vault
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[contracttype]
 pub struct DepositMade {
     pub vault_id: BytesN<32>,
     pub depositor: Address,
+    pub asset: BytesN<32>,
     pub amount: i128,
 }
 
+/// Event emitted when funds are withdrawn from a vault
 impl IntoVal<Env, Val> for DepositMade {
     fn into_val(&self, env: &Env) -> Val {
         (self.vault_id.clone(), self.depositor.clone(), self.amount).into_val(env)
@@ -31,12 +47,15 @@ impl IntoVal<Env, Val> for DepositMade {
 
 /// Event emitted when a withdrawal is completed
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[contracttype]
 pub struct WithdrawalCompleted {
     pub vault_id: BytesN<32>,
     pub withdrawer: Address,
+    pub asset: BytesN<32>,
     pub amount: i128,
 }
 
+/// Event emitted when a vault is unlocked after lock period expires
 impl IntoVal<Env, Val> for WithdrawalCompleted {
     fn into_val(&self, env: &Env) -> Val {
         (self.vault_id.clone(), self.withdrawer.clone(), self.amount).into_val(env)
@@ -45,8 +64,10 @@ impl IntoVal<Env, Val> for WithdrawalCompleted {
 
 /// Event emitted when a vault is unlocked after lock period
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[contracttype]
 pub struct VaultUnlocked {
     pub vault_id: BytesN<32>,
+    pub asset: BytesN<32>,
     pub unlock_time: u64,
 }
 
@@ -58,6 +79,7 @@ impl IntoVal<Env, Val> for VaultUnlocked {
 
 /// Event emitted when a user's streak is updated
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[contracttype]
 pub struct StreakUpdated {
     pub user: Address,
     pub streak_count: u32,
@@ -72,6 +94,7 @@ impl IntoVal<Env, Val> for StreakUpdated {
 
 /// Event emitted when a loan is issued
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[contracttype]
 pub struct LoanIssued {
     pub loan_id: BytesN<32>,
     pub borrower: Address,
@@ -87,6 +110,7 @@ impl IntoVal<Env, Val> for LoanIssued {
 
 /// Event emitted when a loan is repaid
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[contracttype]
 pub struct LoanRepaid {
     pub loan_id: BytesN<32>,
     pub borrower: Address,
@@ -101,6 +125,7 @@ impl IntoVal<Env, Val> for LoanRepaid {
 
 /// Event emitted when a reward is granted to a user
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[contracttype]
 pub struct RewardGranted {
     pub recipient: Address,
     pub reward_amount: i128,

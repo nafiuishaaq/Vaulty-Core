@@ -1,3 +1,6 @@
+use soroban_sdk::{Address, BytesN, Env};
+use shared::types::Asset;
+use rewards::RewardsContract;
 #![cfg(test)]
 extern crate std;
 
@@ -13,6 +16,12 @@ const WASM: &[u8] = rewards::WASM;
 #[test]
 fn test_rewards_pool_initialization() {
     let env = Env::default();
+    let contract_id = env.register_contract(None, RewardsContract);
+    let asset = Asset {
+        token: Address::generate(&env),
+        symbol: BytesN::from_array(&env, &[0u8; 32]),
+    };
+    RewardsContract::initialize_rewards(&env, &contract_id, &1000i128, &asset);
     let admin = Address::generate(&env);
     let streaks_id = Address::generate(&env);
     let contract_id = env.register_contract_wasm(None, rewards::WASM);
