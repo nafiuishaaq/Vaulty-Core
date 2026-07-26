@@ -63,6 +63,7 @@ export interface Achievement {
 
 export interface WalletState {
   isConnected: boolean
+  /** Stellar public key (G... address). Private keys never enter app state. */
   publicKey: string | null
   network: 'testnet' | 'mainnet'
 }
