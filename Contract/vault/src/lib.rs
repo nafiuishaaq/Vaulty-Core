@@ -608,93 +608,28 @@ impl VaultContract {
         Ok(())
     }
 
-    /// Check emergency stop status
-    fn check_emergency_stop(env: &Env) -> Result<(), Error> {
-        if let Some(emergency_stop) = env
-            .storage()
-            .persistent()
-            .get::<_, EmergencyStop>(&VaultKey::EmergencyStop)
-        {
-            if emergency_stop.active {
-                return Err(Error::EmergencyStopActive);
-            }
-        }
-        Ok(())
-    }
-
-    /// Check and update rate limit
-    fn check_rate_limit(env: &Env) -> Result<(), Error> {
-        let mut rate_limit: RateLimit = env
-            .storage()
-            .persistent()
-            .get(&VaultKey::RateLimit)
-            .unwrap_or(RateLimit::new(1000, 3600));
-
-        let now = TimeHelper::now(env);
-
-        if now >= rate_limit.period_start + rate_limit.period_seconds {
-            rate_limit.current_count = 0;
-            rate_limit.period_start = now;
-        }
-
-        if rate_limit.current_count >= rate_limit.max_operations_per_period {
-            return Err(Error::RateLimitExceeded);
-        }
-
-        rate_limit.current_count = rate_limit.current_count.checked_add(1).ok_or(Error::Overflow)?;
-        env.storage().persistent().set(&VaultKey::RateLimit, &rate_limit);
-
-        Ok(())
-    }
-
-    /// Trigger emergency stop
-    pub fn trigger_emergency_stop(env: Env, admin: Address, reason: BytesN<32>) -> Result<(), Error> {
-        if !Self::is_admin(&env, &admin) {
-            return Err(Error::PermissionDenied);
-        }
-
-        let emergency_stop = EmergencyStop {
-            active: true,
-            triggered_by: admin,
-            triggered_at: TimeHelper::now(&env),
-            reason,
-        };
-
-        env.storage().persistent().set(&VaultKey::EmergencyStop, &emergency_stop);
-        Ok(())
-    }
-
-    /// Lift emergency stop
-    pub fn lift_emergency_stop(env: Env, admin: Address) -> Result<(), Error> {
-        if !Self::is_admin(&env, &admin) {
-            return Err(Error::PermissionDenied);
-        }
-
-        env.storage().persistent().remove(&VaultKey::EmergencyStop);
-        Ok(())
-    }
-
-    /// Grant admin permission
-    pub fn grant_admin(env: Env, admin: Address) -> Result<(), Error> {
-        let permission = Permission {
-            role: Role::Admin,
-            granted_at: TimeHelper::now(&env),
-            expires_at: None,
-        };
-        env.storage()
-            .persistent()
-            .set(&VaultKey::AdminPermissions(admin), &permission);
-        Ok(())
-    }
-
-    /// Check if address is admin
-    fn is_admin(env: &Env, address: &Address) -> bool {
-        if let Some(permission) = env
-            .storage()
-            .persistent()
-            .get::<_, Permission>(&VaultKey::AdminPermissions(address.clone()))
-        {
-            permission.role == Role::Admin
+    /// Check if a vault is currently locked.
+    ///
+    /// Returns `true` only when the vault's status is `Locked` **and** the
+    /// current ledger timestamp is **strictly before** `unlock_time`. Once
+    /// `now >= unlock_time` this returns `false`, meaning the vault is
+    /// considered unlocked at the exact `unlock_time` instant.
+    ///
+    /// # Lock-period boundary rule
+    /// `now >= unlock_time` → returns `false` (unlocked, withdrawal allowed)
+    /// `now <  unlock_time` → returns `true`  (locked, withdrawal denied)
+    ///
+    /// # Arguments
+    /// * `vault_id` - The vault to query
+    ///
+    /// # Returns
+    /// True if the vault is locked, false otherwise
+    pub fn is_locked(env: Env, vault_id: VaultId) -> bool {
+        let vaults_key = vaults_key(&env);
+        let vaults_map: Map<VaultId, VaultMetadata> = env.storage().persistent().get(&vaults_key).expect("Vault not found");
+        let metadata = vaults_map.get(vault_id).expect("Vault not found");
+        if metadata.status == VaultStatus::Locked {
+            !TimeHelper::is_past(&env, metadata.unlock_time)
         } else {
             false
         }
