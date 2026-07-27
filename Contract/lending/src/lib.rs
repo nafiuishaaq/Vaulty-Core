@@ -366,6 +366,120 @@ impl LendingContract {
         Ok(accounting)
     }
 
+    /// Get the current interest rate for an asset
+    pub fn get_interest_rate(env: Env, asset: BytesN<32>) -> i128 {
+        // Find pool for this asset and return its interest rate
+        let pools: Map<BytesN<32>, PoolConfig> = env.storage().persistent().get(&PoolKey::Pool(BytesN::from_array(&env, &[0u8;32]))).unwrap_or_default();
+        for (pool_id, config) in pools.iter() {
+            if config.asset == asset {
+                return config.interest_rate;
+            }
+        }
+        0 // Default if not found
+    }
+
+    /// Borrow funds from the lending pool (called by borrowing contract)
+    pub fn borrow(env: Env, pool_id: BytesN<32>, to: Address, amount: i128) -> Result<(), Error> {
+        if !ValidationHelper::validate_positive_amount(amount) {
+            return Err(Error::InvalidAmount);
+        }
+
+        let pool_exists_key = PoolKey::PoolExists(pool_id.clone());
+        if !env.storage().persistent().has(&pool_exists_key) {
+            return Err(Error::PoolNotFound);
+        }
+
+        Self::accrue_interest(env.clone(), pool_id.clone())?;
+
+        let mut accounting: PoolAccounting = env
+            .storage()
+            .persistent()
+            .get(&PoolKey::Accounting(pool_id.clone()))
+            .ok_or(Error::PoolNotFound)?;
+
+        if accounting.available_liquidity < amount {
+            return Err(Error::InsufficientLiquidity);
+        }
+
+        // Transfer tokens to borrower
+        let pool_config: PoolConfig = env
+            .storage()
+            .persistent()
+            .get(&PoolKey::Pool(pool_id.clone()))
+            .ok_or(Error::PoolNotFound)?;
+
+        // Transfer funds from pool to borrower
+        let mut args = Vec::new(&env);
+        args.push_back(env.current_contract_address().into_val(&env));
+        args.push_back(to.clone().into_val(&env));
+        args.push_back(amount.into_val(&env));
+        env.invoke_contract::<()>(&pool_config.asset.token, &Symbol::new(&env, "transfer"), args);
+
+        // Update accounting
+        accounting.available_liquidity = SafeMath::sub(accounting.available_liquidity, amount)
+            .ok_or(Error::Underflow)?;
+        accounting.outstanding_debt = SafeMath::add(accounting.outstanding_debt, amount)
+            .ok_or(Error::Overflow)?;
+
+        env.storage()
+            .persistent()
+            .set(&PoolKey::Accounting(pool_id), &accounting);
+
+        Ok(())
+    }
+
+    /// Repay funds to the lending pool (called by borrowing contract)
+    pub fn repay(env: Env, pool_id: BytesN<32>, from: Address, principal_amount: i128, interest_amount: i128) -> Result<(), Error> {
+        let total_amount = SafeMath::add(principal_amount, interest_amount)
+            .ok_or(Error::Overflow)?;
+
+        if !ValidationHelper::validate_positive_amount(total_amount) {
+            return Err(Error::InvalidAmount);
+        }
+
+        let pool_exists_key = PoolKey::PoolExists(pool_id.clone());
+        if !env.storage().persistent().has(&pool_exists_key) {
+            return Err(Error::PoolNotFound);
+        }
+
+        from.require_auth();
+
+        Self::accrue_interest(env.clone(), pool_id.clone())?;
+
+        let mut accounting: PoolAccounting = env
+            .storage()
+            .persistent()
+            .get(&PoolKey::Accounting(pool_id.clone()))
+            .ok_or(Error::PoolNotFound)?;
+
+        let pool_config: PoolConfig = env
+            .storage()
+            .persistent()
+            .get(&PoolKey::Pool(pool_id.clone()))
+            .ok_or(Error::PoolNotFound)?;
+
+        // Transfer repayment from borrower to pool
+        let mut args = Vec::new(&env);
+        args.push_back(from.clone().into_val(&env));
+        args.push_back(env.current_contract_address().into_val(&env));
+        args.push_back(total_amount.into_val(&env));
+        env.invoke_contract::<()>(&pool_config.asset.token, &Symbol::new(&env, "transfer_from"), args);
+
+        // Update accounting
+        accounting.available_liquidity = SafeMath::add(accounting.available_liquidity, principal_amount)
+            .ok_or(Error::Overflow)?;
+        accounting.outstanding_debt = SafeMath::sub(accounting.outstanding_debt, principal_amount)
+            .ok_or(Error::Underflow)?;
+        accounting.accrued_interest = SafeMath::sub(accounting.accrued_interest, interest_amount)
+            .ok_or(Error::Underflow)?;
+
+        env.storage()
+            .persistent()
+            .set(&PoolKey::Accounting(pool_id), &accounting);
+
+        Ok(())
+    }
+
     /// Get user's share balance
     pub fn get_share_balance(
         env: Env,
