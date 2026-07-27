@@ -1,12 +1,12 @@
 #![no_std]
 use soroban_sdk::{
-    contract, contractimpl, contracttype,
-    Address, BytesN, Env, Vec,
+    contract, contractimpl, contracttype, symbol,
+    Address, BytesN, Env, IntoVal, Symbol, Vec,
 };
 use shared::errors::Error;
-use shared::events::{LoanIssued, LoanRepaid};
-use shared::types::{CollateralConfig, LoanInfo, LoanStatus};
-use shared::utils::{SafeMath, TimeHelper, ValidationHelper};
+use shared::events::{LoanIssued, LoanRepaid, LoanLiquidated, CollateralLocked, CollateralReleased};
+use shared::types::{CollateralConfig, LoanInfo, LoanStatus, PoolAccounting};
+use shared::utils::{SafeMath, TimeHelper, ValidationHelper, FixedMath};
 
 /// Storage keys for borrowing contract
 #[derive(Clone)]
@@ -17,15 +17,10 @@ pub enum BorrowingKey {
     UserLoans(Address),
     LoanExists(BytesN<32>),
     GlobalLoanCount,
+    LendingPoolAddress,
+    VaultContractAddress,
+    CollateralLocked(BytesN<32>), // Track if collateral is locked for a loan
 }
-
-/// Borrowing contract for managing collateralized loans
-use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, Map};
-use shared::{
-    errors::Error,
-    types::{Asset, Loan, LoanStatus},
-    utils::{SafeMath, ValidationHelper},
-};
 
 /// Borrowing contract for managing collateralized loans.
 #[contract]
@@ -34,10 +29,25 @@ pub struct BorrowingContract;
 #[cfg(test)]
 pub use BorrowingContract;
 
-const COLLATERAL_RATIO_BPS: u32 = 15_000;
-
 #[contractimpl]
 impl BorrowingContract {
+    /// Initialize the borrowing contract with dependent contract addresses
+    pub fn initialize(
+        env: Env,
+        lending_pool_address: Address,
+        vault_contract_address: Address,
+    ) -> Result<(), Error> {
+        // Check if already initialized
+        if env.storage().persistent().has(&BorrowingKey::LendingPoolAddress) {
+            return Err(Error::AlreadyInitialized);
+        }
+
+        env.storage().persistent().set(&BorrowingKey::LendingPoolAddress, &lending_pool_address);
+        env.storage().persistent().set(&BorrowingKey::VaultContractAddress, &vault_contract_address);
+
+        Ok(())
+    }
+
     /// Configure collateral parameters for an asset
     pub fn configure_collateral(
         env: Env,
@@ -70,35 +80,64 @@ impl BorrowingContract {
         Ok(())
     }
 
-    /// Borrow assets against collateral
+    /// Borrow assets against collateral - complete implementation
     pub fn borrow(
         env: Env,
         loan_id: BytesN<32>,
-    pub fn borrow(
-        env: Env,
         borrower: Address,
         collateral_asset: BytesN<32>,
-        collateral_amount: i128,
+        collateral_vault_id: BytesN<32>, // Vault ID containing the collateral
         borrow_asset: BytesN<32>,
+        borrow_pool_id: BytesN<32>,
         borrow_amount: i128,
     ) -> Result<(), Error> {
-        if !ValidationHelper::validate_positive_amount(collateral_amount) {
-            return Err(Error::InvalidAmount);
-        }
+        // Validate inputs
         if !ValidationHelper::validate_positive_amount(borrow_amount) {
             return Err(Error::InvalidAmount);
         }
 
+        // Check if loan already exists
         if env.storage().persistent().has(&BorrowingKey::LoanExists(loan_id.clone())) {
             return Err(Error::LoanAlreadyExists);
         }
 
+        // Require borrower authorization
+        borrower.require_auth();
+
+        // Get collateral configuration
         let collateral_config: CollateralConfig = env
             .storage()
             .persistent()
             .get(&BorrowingKey::CollateralConfig(collateral_asset.clone()))
             .ok_or(Error::InvalidCollateral)?;
 
+        // Get vault contract address and verify collateral ownership
+        let vault_contract: Address = env.storage().persistent()
+            .get(&BorrowingKey::VaultContractAddress)
+            .ok_or(Error::NotInitialized)?;
+
+        // Verify vault belongs to borrower and get collateral amount
+        let mut args = Vec::new(&env);
+        args.push_back(collateral_vault_id.clone().into_val(&env));
+        let vault_metadata: shared::types::VaultMetadata = env.invoke_contract(
+            &vault_contract,
+            &Symbol::new(&env, "get_vault"),
+            args
+        );
+
+        // Verify vault owner is the borrower
+        if vault_metadata.owner != borrower {
+            return Err(Error::Unauthorized);
+        }
+
+        // Verify vault is active and can be locked
+        if vault_metadata.status != shared::types::VaultStatus::Active {
+            return Err(Error::InvalidParameters);
+        }
+
+        let collateral_amount = vault_metadata.asset.token.balance(&env, &vault_contract);
+
+        // Calculate required collateral based on LTV
         let required_collateral = SafeMath::div(
             SafeMath::mul(borrow_amount, 10000).ok_or(Error::Overflow)?,
             collateral_config.loan_to_value,
@@ -108,6 +147,44 @@ impl BorrowingContract {
             return Err(Error::InsufficientCollateral);
         }
 
+        // Check lending pool has sufficient liquidity
+        let lending_pool: Address = env.storage().persistent()
+            .get(&BorrowingKey::LendingPoolAddress)
+            .ok_or(Error::NotInitialized)?;
+
+        let mut pool_args = Vec::new(&env);
+        pool_args.push_back(borrow_pool_id.clone().into_val(&env));
+        let pool_accounting: PoolAccounting = env.invoke_contract(
+            &lending_pool,
+            &Symbol::new(&env, "get_pool_accounting"),
+            pool_args
+        );
+
+        if pool_accounting.available_liquidity < borrow_amount {
+            return Err(Error::InsufficientLiquidity);
+        }
+
+        // Lock the vault (prevent withdrawals while debt exists)
+        let mut lock_args = Vec::new(&env);
+        lock_args.push_back(collateral_vault_id.clone().into_val(&env));
+        env.invoke_contract::<()>(
+            &vault_contract,
+            &Symbol::new(&env, "lock_vault"),
+            lock_args
+        );
+
+        // Transfer borrowed funds from lending pool to borrower
+        let mut borrow_args = Vec::new(&env);
+        borrow_args.push_back(borrow_pool_id.clone().into_val(&env));
+        borrow_args.push_back(borrower.clone().into_val(&env));
+        borrow_args.push_back(borrow_amount.into_val(&env));
+        env.invoke_contract::<()>(
+            &lending_pool,
+            &Symbol::new(&env, "borrow"),
+            borrow_args
+        );
+
+        // Create and store loan information
         let now = TimeHelper::now(&env);
 
         let loan_info = LoanInfo {
@@ -129,7 +206,11 @@ impl BorrowingContract {
         env.storage()
             .persistent()
             .set(&BorrowingKey::LoanExists(loan_id.clone()), &true);
+        env.storage()
+            .persistent()
+            .set(&BorrowingKey::CollateralLocked(loan_id.clone()), &collateral_vault_id);
 
+        // Update user's loan list
         let user_loans_key = BorrowingKey::UserLoans(borrower.clone());
         let mut user_loans: Vec<BytesN<32>> = env
             .storage()
@@ -139,6 +220,7 @@ impl BorrowingContract {
         user_loans.push_back(loan_id.clone());
         env.storage().persistent().set(&user_loans_key, &user_loans);
 
+        // Update global loan count
         let mut count: u64 = env
             .storage()
             .persistent()
@@ -149,25 +231,86 @@ impl BorrowingContract {
             .persistent()
             .set(&BorrowingKey::GlobalLoanCount, &count);
 
+        // Emit events
         env.events()
             .publish((LoanIssued::topic(&env), loan_id.clone()), LoanIssued {
-                loan_id,
-                borrower,
+                loan_id: loan_id.clone(),
+                borrower: borrower.clone(),
                 amount: borrow_amount,
                 collateral: collateral_amount,
+            });
+
+        env.events()
+            .publish((CollateralLocked::topic(&env), loan_id.clone()), CollateralLocked {
+                loan_id,
+                vault_id: collateral_vault_id,
+                amount: collateral_amount,
             });
 
         Ok(())
     }
 
-    /// Repay a loan
+    /// Accrue interest on an active loan
+    pub fn accrue_interest(
+        env: Env,
+        loan_id: BytesN<32>,
+    ) -> Result<(), Error> {
+        let mut loan_info: LoanInfo = env
+            .storage()
+            .persistent()
+            .get(&BorrowingKey::Loan(loan_id.clone()))
+            .ok_or(Error::LoanNotFound)?;
+
+        if loan_info.status != LoanStatus::Active {
+            return Err(Error::InvalidParameters);
+        }
+
+        let lending_pool: Address = env.storage().persistent()
+            .get(&BorrowingKey::LendingPoolAddress)
+            .ok_or(Error::NotInitialized)?;
+
+        // Get interest rate from lending pool
+        let mut rate_args = Vec::new(&env);
+        rate_args.push_back(loan_info.borrow_asset.clone().into_val(&env));
+        let interest_rate: i128 = env.invoke_contract(
+            &lending_pool,
+            &Symbol::new(&env, "get_interest_rate"),
+            rate_args
+        );
+
+        let now = TimeHelper::now(&env);
+        let time_elapsed = now - loan_info.last_updated;
+        
+        // Calculate interest: principal * rate * time / (seconds per year * 10000 bps)
+        let seconds_per_year = 31536000i128;
+        let interest = SafeMath::div(
+            SafeMath::mul(
+                SafeMath::mul(loan_info.borrow_amount, interest_rate).ok_or(Error::Overflow)?,
+                time_elapsed as i128
+            ).ok_or(Error::Overflow)?,
+            SafeMath::mul(seconds_per_year, 10000i128).ok_or(Error::Overflow)?
+        ).ok_or(Error::Overflow)?;
+
+        loan_info.interest_accrued = SafeMath::add(loan_info.interest_accrued, interest)
+            .ok_or(Error::Overflow)?;
+        loan_info.last_updated = now;
+
+        env.storage()
+            .persistent()
+            .set(&BorrowingKey::Loan(loan_id), &loan_info);
+
+        Ok(())
+    }
+
+    /// Repay a loan - complete implementation with interest handling
     pub fn repay(
         env: Env,
         loan_id: BytesN<32>,
         repayer: Address,
-        amount: i128,
+        principal_amount: i128,
+        interest_amount: i128,
     ) -> Result<(), Error> {
-        if !ValidationHelper::validate_positive_amount(amount) {
+        if !ValidationHelper::validate_positive_amount(principal_amount) {
             return Err(Error::InvalidAmount);
         }
 
@@ -185,25 +328,93 @@ impl BorrowingContract {
             return Err(Error::Unauthorized);
         }
 
-        let now = TimeHelper::now(&env);
+        repayer.require_auth();
 
-        loan_info.borrow_amount = SafeMath::sub(loan_info.borrow_amount, amount)
+        // Accrue interest before processing repayment
+        Self::accrue_interest(env.clone(), loan_id.clone())?;
+
+        // Refresh loan info after interest accrual
+        loan_info = env.storage().persistent()
+            .get(&BorrowingKey::Loan(loan_id.clone()))
+            .ok_or(Error::LoanNotFound)?;
+
+        let total_payment = SafeMath::add(principal_amount, interest_amount)
+            .ok_or(Error::Overflow)?;
+
+        // Validate repayment doesn't exceed owed amount
+        let total_owed = SafeMath::add(loan_info.borrow_amount, loan_info.interest_accrued)
+            .ok_or(Error::Overflow)?;
+
+        if total_payment > total_owed {
+            return Err(Error::InvalidAmount);
+        }
+
+        let lending_pool: Address = env.storage().persistent()
+            .get(&BorrowingKey::LendingPoolAddress)
+            .ok_or(Error::NotInitialized)?;
+
+        // Transfer repayment to lending pool
+        let mut repay_args = Vec::new(&env);
+        repay_args.push_back(loan_info.borrow_asset.clone().into_val(&env));
+        repay_args.push_back(repayer.clone().into_val(&env));
+        repay_args.push_back(principal_amount.into_val(&env));
+        repay_args.push_back(interest_amount.into_val(&env));
+        env.invoke_contract::<()>(
+            &lending_pool,
+            &Symbol::new(&env, "repay"),
+            repay_args
+        );
+
+        // Update loan state
+        loan_info.borrow_amount = SafeMath::sub(loan_info.borrow_amount, principal_amount)
             .ok_or(Error::Underflow)?;
-        loan_info.last_updated = now;
+        loan_info.interest_accrued = SafeMath::sub(loan_info.interest_accrued, interest_amount)
+            .ok_or(Error::Underflow)?;
+        loan_info.last_updated = TimeHelper::now(&env);
 
-        if loan_info.borrow_amount == 0 {
+        let is_fully_repaid = loan_info.borrow_amount == 0 && loan_info.interest_accrued == 0;
+        
+        if is_fully_repaid {
             loan_info.status = LoanStatus::Repaid;
+
+            // Release collateral - unlock the vault
+            let collateral_vault_id: BytesN<32> = env.storage().persistent()
+                .get(&BorrowingKey::CollateralLocked(loan_id.clone()))
+                .ok_or(Error::LoanNotFound)?;
+
+            let vault_contract: Address = env.storage().persistent()
+                .get(&BorrowingKey::VaultContractAddress)
+                .ok_or(Error::NotInitialized)?;
+
+            let mut unlock_args = Vec::new(&env);
+            unlock_args.push_back(collateral_vault_id.clone().into_val(&env));
+            env.invoke_contract::<()>(
+                &vault_contract,
+                &Symbol::new(&env, "unlock_vault"),
+                unlock_args
+            );
+
+            // Remove collateral lock tracking
+            env.storage().persistent().remove(&BorrowingKey::CollateralLocked(loan_id.clone()));
+
+            // Emit collateral released event
+            env.events()
+                .publish((CollateralReleased::topic(&env), loan_id.clone()), CollateralReleased {
+                    loan_id: loan_id.clone(),
+                    vault_id: collateral_vault_id,
+                });
         }
 
         env.storage()
             .persistent()
             .set(&BorrowingKey::Loan(loan_id.clone()), &loan_info);
 
+        // Emit repayment event
         env.events()
             .publish((LoanRepaid::topic(&env), loan_id.clone()), LoanRepaid {
                 loan_id,
                 borrower: repayer,
-                amount_repaid: amount,
+                amount_repaid: total_payment,
             });
 
         Ok(())
@@ -213,9 +424,9 @@ impl BorrowingContract {
     pub fn add_collateral(
         env: Env,
         loan_id: BytesN<32>,
-        amount: i128,
+        additional_amount: i128,
     ) -> Result<(), Error> {
-        if !ValidationHelper::validate_positive_amount(amount) {
+        if !ValidationHelper::validate_positive_amount(additional_amount) {
             return Err(Error::InvalidAmount);
         }
 
@@ -229,13 +440,15 @@ impl BorrowingContract {
             return Err(Error::InvalidParameters);
         }
 
-        loan_info.collateral_amount = SafeMath::add(loan_info.collateral_amount, amount)
+        loan_info.borrower.require_auth();
+
+        loan_info.collateral_amount = SafeMath::add(loan_info.collateral_amount, additional_amount)
             .ok_or(Error::Overflow)?;
         loan_info.last_updated = TimeHelper::now(&env);
 
         env.storage()
             .persistent()
-            .set(&BorrowingKey::Loan(loan_id.clone()), &loan_info);
+            .set(&BorrowingKey::Loan(loan_id), &loan_info);
 
         Ok(())
     }
@@ -253,11 +466,17 @@ impl BorrowingContract {
 
     /// Check if a loan is undercollateralized
     pub fn is_undercollateralized(env: Env, loan_id: BytesN<32>) -> Result<bool, Error> {
-        let loan_info: LoanInfo = env
+        let mut loan_info: LoanInfo = env
             .storage()
             .persistent()
             .get(&BorrowingKey::Loan(loan_id))
             .ok_or(Error::LoanNotFound)?;
+
+        // Accrue interest to get current total debt
+        if loan_info.status == LoanStatus::Active {
+            Self::accrue_interest(env.clone(), loan_id.clone())?;
+            loan_info = env.storage().persistent().get(&BorrowingKey::Loan(loan_id)).unwrap();
+        }
 
         let collateral_config: CollateralConfig = env
             .storage()
@@ -267,9 +486,16 @@ impl BorrowingContract {
             ))
             .ok_or(Error::InvalidCollateral)?;
 
+        let total_debt = SafeMath::add(loan_info.borrow_amount, loan_info.interest_accrued)
+            .ok_or(Error::Overflow)?;
+
+        if total_debt == 0 {
+            return Ok(false);
+        }
+
         let current_ratio = SafeMath::div(
             SafeMath::mul(loan_info.collateral_amount, 10000).ok_or(Error::Overflow)?,
-            loan_info.borrow_amount,
+            total_debt,
         ).ok_or(Error::Overflow)?;
 
         Ok(current_ratio < collateral_config.liquidation_threshold)
@@ -279,7 +505,7 @@ impl BorrowingContract {
     pub fn liquidate(
         env: Env,
         loan_id: BytesN<32>,
-        _liquidator: Address,
+        liquidator: Address,
     ) -> Result<(), Error> {
         let mut loan_info: LoanInfo = env
             .storage()
@@ -295,8 +521,50 @@ impl BorrowingContract {
             return Err(Error::InvalidParameters);
         }
 
+        liquidator.require_auth();
+
+        // Mark loan as liquidated
         loan_info.status = LoanStatus::Liquidated;
         loan_info.last_updated = TimeHelper::now(&env);
+
+        // Get collateral vault and release it to liquidator
+        let collateral_vault_id: BytesN<32> = env.storage().persistent()
+            .get(&BorrowingKey::CollateralLocked(loan_id.clone()))
+            .ok_or(Error::LoanNotFound)?;
+
+        let vault_contract: Address = env.storage().persistent()
+            .get(&BorrowingKey::VaultContractAddress)
+            .ok_or(Error::NotInitialized)?;
+
+        // Transfer vault ownership to liquidator
+        let mut transfer_args = Vec::new(&env);
+        transfer_args.push_back(collateral_vault_id.clone().into_val(&env));
+        transfer_args.push_back(liquidator.clone().into_val(&env));
+        env.invoke_contract::<()>(
+            &vault_contract,
+            &Symbol::new(&env, "transfer_vault_ownership"),
+            transfer_args
+        );
+
+        // Remove collateral lock tracking
+        env.storage().persistent().remove(&BorrowingKey::CollateralLocked(loan_id.clone()));
+
+        env.storage()
+            .persistent()
+            .set(&BorrowingKey::Loan(loan_id.clone()), &loan_info);
+
+        // Emit liquidation event
+        env.events()
+            .publish((LoanLiquidated::topic(&env), loan_id.clone()), LoanLiquidated {
+                loan_id,
+                liquidator,
+                collateral_seized: loan_info.collateral_amount,
+                remaining_debt: loan_info.borrow_amount,
+            });
+
+        Ok(())
+    }
+}
 
         env.storage()
             .persistent()

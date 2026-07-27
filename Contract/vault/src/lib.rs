@@ -660,6 +660,77 @@ impl VaultContract {
         Ok(config)
     }
 
+    /// Lock a vault to prevent withdrawals (used by borrowing contract)
+    pub fn lock_vault(env: Env, vault_id: VaultId) -> Result<(), Error> {
+        let vaults_key = vaults_key(&env);
+        let mut vaults_map: Map<VaultId, VaultMetadata> = env.storage().persistent().get(&vaults_key).expect("Vault not found");
+        let mut metadata = vaults_map.get(vault_id.clone()).expect("Vault not found");
+
+        if metadata.status != shared::types::VaultStatus::Active {
+            return Err(Error::InvalidParameters);
+        }
+
+        metadata.status = shared::types::VaultStatus::Locked;
+        vaults_map.set(vault_id, metadata);
+        env.storage().persistent().set(&vaults_key, &vaults_map);
+
+        Ok(())
+    }
+
+    /// Unlock a vault after loan is repaid
+    pub fn unlock_vault(env: Env, vault_id: VaultId) -> Result<(), Error> {
+        let vaults_key = vaults_key(&env);
+        let mut vaults_map: Map<VaultId, VaultMetadata> = env.storage().persistent().get(&vaults_key).expect("Vault not found");
+        let mut metadata = vaults_map.get(vault_id.clone()).expect("Vault not found");
+
+        if metadata.status != shared::types::VaultStatus::Locked {
+            return Err(Error::InvalidParameters);
+        }
+
+        metadata.status = shared::types::VaultStatus::Active;
+        vaults_map.set(vault_id, metadata);
+        env.storage().persistent().set(&vaults_key, &vaults_map);
+
+        Ok(())
+    }
+
+    /// Transfer vault ownership (used during liquidation)
+    pub fn transfer_vault_ownership(env: Env, vault_id: VaultId, new_owner: Address) -> Result<(), Error> {
+        let vaults_key = vaults_key(&env);
+        let mut vaults_map: Map<VaultId, VaultMetadata> = env.storage().persistent().get(&vaults_key).expect("Vault not found");
+        let mut metadata = vaults_map.get(vault_id.clone()).expect("Vault not found");
+
+        // Remove from old owner's vault list
+        let old_owner = metadata.owner.clone();
+        let old_user_vaults_key = VaultKey::UserLoans(old_owner.clone());
+        if let Some(mut old_user_vaults): Option<Vec<VaultId>> = env.storage().persistent().get(&old_user_vaults_key) {
+            old_user_vaults = old_user_vaults.into_iter().filter(|v| v != &vault_id).collect();
+            env.storage().persistent().set(&old_user_vaults_key, &old_user_vaults);
+        }
+
+        // Update owner
+        metadata.owner = new_owner.clone();
+        metadata.status = shared::types::VaultStatus::Active;
+        vaults_map.set(vault_id, metadata);
+        env.storage().persistent().set(&vaults_key, &vaults_map);
+
+        // Add to new owner's vault list
+        let new_user_vaults_key = VaultKey::UserLoans(new_owner);
+        let mut new_user_vaults: Vec<VaultId> = env.storage().persistent().get(&new_user_vaults_key).unwrap_or(Vec::new(&env));
+        new_user_vaults.push_back(vault_id);
+        env.storage().persistent().set(&new_user_vaults_key, &new_user_vaults);
+
+        Ok(())
+    }
+
+    /// Get vault metadata (for cross-contract calls)
+    pub fn get_vault(env: Env, vault_id: BytesN<32>) -> VaultMetadata {
+        let typed_vault_id = VaultId(vault_id);
+        let vaults_key = vaults_key(&env);
+        let vaults_map: Map<VaultId, VaultMetadata> = env.storage().persistent().get(&vaults_key).expect("Vault not found");
+        vaults_map.get(typed_vault_id).expect("Vault not found")
+    }
+
     /// Helper function to generate a vault ID from a counter
     fn generate_vault_id(env: &Env, counter: u64) -> BytesN<32> {
         let mut bytes = [0u8; 32];
