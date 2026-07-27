@@ -348,6 +348,147 @@ impl LendingContract {
         .ok_or(Error::Overflow)
     }
 
+    /// Get the interest rate for an asset's pool
+    pub fn get_interest_rate(env: Env, asset: BytesN<32>) -> Result<i128, Error> {
+        // Iterate through pools to find the matching asset (simplified for this implementation)
+        // In production, we would maintain an asset-to-pool mapping
+        let all_pools = env.storage().persistent().keys();
+        for key in all_pools {
+            if let Some(PoolKey::Pool(pool_id)) = key.try_into() {
+                let config: PoolConfig = env.storage().persistent().get(&PoolKey::Pool(pool_id)).ok_or(Error::PoolNotFound)?;
+                if config.asset == asset {
+                    return Ok(config.interest_rate);
+                }
+            }
+        }
+        Err(Error::PoolNotFound)
+    }
+
+    /// Borrow funds from a lending pool (called by borrowing contract)
+    pub fn borrow(
+        env: Env,
+        pool_id: BytesN<32>,
+        to: Address,
+        amount: i128,
+    ) -> Result<(), Error> {
+        if !ValidationHelper::validate_positive_amount(amount) {
+            return Err(Error::InvalidAmount);
+        }
+
+        let pool_exists_key = PoolKey::PoolExists(pool_id.clone());
+        if !env.storage().persistent().has(&pool_exists_key) {
+            return Err(Error::PoolNotFound);
+        }
+
+        // Accrue interest before any changes
+        Self::accrue_interest(env.clone(), pool_id.clone())?;
+
+        let mut accounting: PoolAccounting = env
+            .storage()
+            .persistent()
+            .get(&PoolKey::Accounting(pool_id.clone()))
+            .ok_or(Error::PoolNotFound)?;
+
+        // Check if sufficient liquidity is available
+        if accounting.available_liquidity < amount {
+            return Err(Error::InsufficientLiquidity);
+        }
+
+        // Update accounting
+        accounting.available_liquidity = accounting
+            .available_liquidity
+            .checked_sub(amount)
+            .ok_or(Error::Underflow)?;
+        accounting.outstanding_debt = accounting
+            .outstanding_debt
+            .checked_add(amount)
+            .ok_or(Error::Overflow)?;
+
+        env.storage()
+            .persistent()
+            .set(&PoolKey::Accounting(pool_id.clone()), &accounting);
+
+        // In a real implementation, we would transfer tokens from pool to borrower
+        // This assumes the token contract handles the transfer
+        let config: PoolConfig = env
+            .storage()
+            .persistent()
+            .get(&PoolKey::Pool(pool_id.clone()))
+            .ok_or(Error::PoolNotFound)?;
+
+        Ok(())
+    }
+
+    /// Repay funds to a lending pool (called by borrowing contract)
+    pub fn repay(
+        env: Env,
+        pool_id: BytesN<32>,
+        from: Address,
+        principal_amount: i128,
+        interest_amount: i128,
+    ) -> Result<(), Error> {
+        if !ValidationHelper::validate_positive_amount(principal_amount) || 
+           !ValidationHelper::validate_positive_amount(interest_amount) {
+            return Err(Error::InvalidAmount);
+        }
+
+        let pool_exists_key = PoolKey::PoolExists(pool_id.clone());
+        if !env.storage().persistent().has(&pool_exists_key) {
+            return Err(Error::PoolNotFound);
+        }
+
+        // Accrue interest before any changes
+        Self::accrue_interest(env.clone(), pool_id.clone())?;
+
+        let mut accounting: PoolAccounting = env
+            .storage()
+            .persistent()
+            .get(&PoolKey::Accounting(pool_id.clone()))
+            .ok_or(Error::PoolNotFound)?;
+
+        let total_payment = SafeMath::add(principal_amount, interest_amount)
+            .ok_or(Error::Overflow)?;
+
+        // Update accounting
+        accounting.available_liquidity = accounting
+            .available_liquidity
+            .checked_add(total_payment)
+            .ok_or(Error::Overflow)?;
+        accounting.outstanding_debt = accounting
+            .outstanding_debt
+            .checked_sub(principal_amount)
+            .ok_or(Error::Underflow)?;
+        accounting.accrued_interest = accounting
+            .accrued_interest
+            .checked_add(interest_amount)
+            .ok_or(Error::Overflow)?;
+
+        env.storage()
+            .persistent()
+            .set(&PoolKey::Accounting(pool_id.clone()), &accounting);
+
+        // In a real implementation, we would transfer tokens from borrower to pool
+        Ok(())
+    }
+
+    /// Get pool accounting information (required by borrowing contract)
+    pub fn get_pool_accounting(env: Env, pool_id: BytesN<32>) -> Result<PoolAccounting, Error> {
+        let pool_exists_key = PoolKey::PoolExists(pool_id.clone());
+        if !env.storage().persistent().has(&pool_exists_key) {
+            return Err(Error::PoolNotFound);
+        }
+
+        Self::accrue_interest(env.clone(), pool_id.clone())?;
+
+        let accounting: PoolAccounting = env
+            .storage()
+            .persistent()
+            .get(&PoolKey::Accounting(pool_id))
+            .ok_or(Error::PoolNotFound)?;
+
+        Ok(accounting)
+    }
+
     /// Get pool accounting details
     pub fn get_pool_accounting(env: Env, pool_id: BytesN<32>) -> Result<PoolAccounting, Error> {
         let pool_exists_key = PoolKey::PoolExists(pool_id.clone());
