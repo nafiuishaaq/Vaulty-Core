@@ -39,10 +39,10 @@ describe('Profile Integration Tests', () => {
     await prisma.user.deleteMany({ where: { email: testEmail } });
   });
 
-  describe('GET /api/auth/profile', () => {
+  describe('GET /api/v1/auth/profile', () => {
     it('should return user profile when authenticated', async () => {
       const response = await request(app)
-        .get('/api/auth/profile')
+        .get('/api/v1/auth/profile')
         .set('Authorization', `Bearer ${authToken}`);
 
       expect(response.status).toBe(200);
@@ -53,15 +53,15 @@ describe('Profile Integration Tests', () => {
     });
 
     it('should reject unauthenticated requests', async () => {
-      const response = await request(app).get('/api/auth/profile');
+      const response = await request(app).get('/api/v1/auth/profile');
       expect(response.status).toBe(401);
     });
   });
 
-  describe('PUT /api/auth/profile', () => {
+  describe('PUT /api/v1/auth/profile', () => {
     it('should update first and last name successfully', async () => {
       const response = await request(app)
-        .put('/api/auth/profile')
+        .put('/api/v1/auth/profile')
         .set('Authorization', `Bearer ${authToken}`)
         .send({ firstName: 'Updated', lastName: 'User' });
 
@@ -76,7 +76,7 @@ describe('Profile Integration Tests', () => {
       const normalizedPhone = normalizePhoneNumber(phoneNumber);
       
       const response = await request(app)
-        .put('/api/auth/profile')
+        .put('/api/v1/auth/profile')
         .set('Authorization', `Bearer ${authToken}`)
         .send({ phoneNumber });
 
@@ -101,7 +101,7 @@ describe('Profile Integration Tests', () => {
 
       // Try to update first user's phone to the same number
       const response = await request(app)
-        .put('/api/auth/profile')
+        .put('/api/v1/auth/profile')
         .set('Authorization', `Bearer ${authToken}`)
         .send({ phoneNumber: secondPhone });
 
@@ -125,7 +125,7 @@ describe('Profile Integration Tests', () => {
 
       // Try to update to the same number again
       const response = await request(app)
-        .put('/api/auth/profile')
+        .put('/api/v1/auth/profile')
         .set('Authorization', `Bearer ${authToken}`)
         .send({ phoneNumber });
 
@@ -135,7 +135,7 @@ describe('Profile Integration Tests', () => {
 
     it('should reject invalid phone number', async () => {
       const response = await request(app)
-        .put('/api/auth/profile')
+        .put('/api/v1/auth/profile')
         .set('Authorization', `Bearer ${authToken}`)
         .send({ phoneNumber: 'invalidphone' });
 
@@ -145,7 +145,7 @@ describe('Profile Integration Tests', () => {
 
     it('should return the same safe user shape as GET profile', async () => {
       const response = await request(app)
-        .put('/api/auth/profile')
+        .put('/api/v1/auth/profile')
         .set('Authorization', `Bearer ${authToken}`)
         .send({ firstName: 'TestUpdate' });
 
