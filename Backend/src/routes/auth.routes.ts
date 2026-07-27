@@ -12,6 +12,7 @@ import {
   verifyEmailSchema,
   resendVerificationEmailSchema,
   logoutSchema,
+  updateProfileSchema,
 } from '../validators/auth.validator';
 
 const router = Router();
@@ -28,6 +29,7 @@ router.post('/logout', authenticate, sessionRateLimiter, validate(logoutSchema),
 
 // Protected routes
 router.get('/profile', authenticate, authController.getProfile);
+router.put('/profile', authenticate, validate(updateProfileSchema), authController.updateProfile);
 router.post('/logout-all', authenticate, sessionRateLimiter, authController.logoutAll);
 
 export const authRouter = router;
