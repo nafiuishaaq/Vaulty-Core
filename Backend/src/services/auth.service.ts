@@ -337,6 +337,39 @@ export class AuthService {
     return user;
   }
 
+  async updateProfile(userId: string, data: UpdateProfileInput) {
+    const user = await userRepository.findById(userId);
+    if (!user) {
+      throw new AppError('User not found', 404);
+    }
+
+    const updateData: any = {};
+    if (data.firstName !== undefined) updateData.firstName = data.firstName;
+    if (data.lastName !== undefined) updateData.lastName = data.lastName;
+    
+    // If phone number is being updated, check for uniqueness
+    if (data.phoneNumber !== undefined) {
+      // Normalize the phone number (it's already normalized by the validator, but just to be safe)
+      const normalizedPhone = data.phoneNumber;
+      
+      // Check if another user has this phone number
+      const existingUserWithPhone = await userRepository.findByPhoneNumber(normalizedPhone);
+      if (existingUserWithPhone && existingUserWithPhone.id !== userId) {
+        throw new AppError('User with this phone number already exists', 409);
+      }
+      
+      updateData.phoneNumber = normalizedPhone;
+    }
+
+    // If there's nothing to update, just return the current user
+    if (Object.keys(updateData).length === 0) {
+      return user;
+    }
+
+    const updatedUser = await userRepository.update(userId, updateData);
+    return updatedUser;
+  }
+
   /**
    * Logs out the session identified by the presented refresh token. The token
    * must still be valid (present and unrevoked) so an attacker cannot use the
