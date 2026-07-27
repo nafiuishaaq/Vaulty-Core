@@ -29,7 +29,7 @@ describe('Profile Integration Tests', () => {
 
     // Login to get auth token
     const loginResponse = await request(app)
-      .post('/api/auth/login')
+      .post('/api/v1/auth/login')
       .send({ email: testEmail, password: testPassword });
     
     authToken = loginResponse.body.data.accessToken;
