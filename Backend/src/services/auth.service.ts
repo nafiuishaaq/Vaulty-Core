@@ -26,6 +26,7 @@ import type {
   ResetPasswordInput,
   VerifyEmailInput,
   ResendVerificationEmailInput,
+  UpdateProfileInput,
 } from '../validators/auth.validator';
 
 const EMAIL_VERIFICATION_TOKEN_EXPIRY_MINUTES = 60 * 24;
