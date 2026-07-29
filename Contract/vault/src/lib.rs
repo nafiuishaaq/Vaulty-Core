@@ -481,6 +481,18 @@ impl VaultContract {
         Ok(metadata)
     }
 
+    /// Get the configured lock period for a vault
+    pub fn get_lock_period(env: Env, vault_id: VaultId) -> Result<u64, Error> {
+        let metadata = Self::get_vault(env.clone(), vault_id)?;
+        Ok(metadata.lock_period)
+    }
+
+    /// Get the configured unlock time for a vault
+    pub fn get_unlock_time(env: Env, vault_id: VaultId) -> Result<u64, Error> {
+        let metadata = Self::get_vault(env.clone(), vault_id)?;
+        Ok(metadata.unlock_time)
+    }
+
     /// Get user's vaults
     ///
     /// # Arguments
@@ -629,8 +641,47 @@ impl VaultContract {
         Ok(())
     }
 
-    /// Unlock a vault after loan is repaid
+    /// Unlock a matured vault after its configured lock period expires.
+    ///
+    /// Anyone can call this once `unlock_time` has been reached. This
+    /// transitions the vault from `Locked` to `Unlocked` exactly once and
+    /// emits a `VaultUnlocked` event.
     pub fn unlock_vault(env: Env, vault_id: VaultId) -> Result<(), Error> {
+        let vaults_key = vaults_key(&env);
+        let mut vaults_map: Map<VaultId, VaultMetadata> = env.storage().persistent().get(&vaults_key).expect("Vault not found");
+        let mut metadata = vaults_map.get(vault_id.clone()).expect("Vault not found");
+
+        if metadata.status != VaultStatus::Locked {
+            if metadata.status == VaultStatus::Unlocked {
+                return Err(Error::VaultAlreadyUnlocked);
+            }
+            return Err(Error::InvalidParameters);
+        }
+        if !TimeHelper::is_unlocked(&env, metadata.unlock_time) {
+            return Err(Error::VaultLocked);
+        }
+
+        metadata.status = VaultStatus::Unlocked;
+        vaults_map.set(vault_id.clone(), metadata.clone());
+        env.storage().persistent().set(&vaults_key, &vaults_map);
+        env.storage().persistent().set(&VaultKey::Vault(vault_id.clone()), &metadata);
+        StorageHelper::touch_vault(&env, &vaults_key);
+        StorageHelper::touch_vault(&env, &VaultKey::Vault(vault_id.clone()));
+
+        env.events().publish(
+            (VaultUnlocked::topic(&env), vault_id.0.clone()),
+            VaultUnlocked {
+                vault_id: vault_id.0.clone(),
+                asset: metadata.asset.symbol.clone(),
+                unlock_time: metadata.unlock_time,
+            },
+        );
+
+        Ok(())
+    }
+
+    /// Unlock a vault after loan repayment
+    pub fn unlock_collateral_vault(env: Env, vault_id: VaultId) -> Result<(), Error> {
         let vaults_key = vaults_key(&env);
         let mut vaults_map: Map<VaultId, VaultMetadata> = env.storage().persistent().get(&vaults_key).expect("Vault not found");
         let mut metadata = vaults_map.get(vault_id.clone()).expect("Vault not found");

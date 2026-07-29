@@ -478,6 +478,115 @@ fn test_is_locked() {
 }
 
 #[test]
+#[should_panic(expected = "VaultLocked")]
+fn test_unlock_vault_before_unlock_time() {
+    let (env, contract_id, owner, symbol, token) = setup();
+
+    let vault_id = VaultContract::create_vault(
+        &env,
+        &contract_id,
+        &owner,
+        &token,
+        &symbol,
+        &86400u64,
+    );
+
+    VaultContract::unlock_vault(&env, &contract_id, &vault_id).unwrap();
+}
+
+#[test]
+fn test_unlock_vault_at_exact_unlock_time() {
+    let (env, contract_id, owner, symbol, token) = setup();
+
+    let vault_id = VaultContract::create_vault(
+        &env,
+        &contract_id,
+        &owner,
+        &token,
+        &symbol,
+        &86400u64,
+    );
+
+    let unlock_time = VaultContract::get_unlock_time(&env, &contract_id, &vault_id);
+    env.ledger().set(soroban_sdk::LedgerInfo {
+        timestamp: unlock_time,
+        protocol_version: 20,
+        sequence_number: 1234,
+        network_id: Default::default(),
+        base_reserve: 10,
+        min_persistent_entry_ttl: 10,
+        min_temp_entry_ttl: 10,
+        max_entry_ttl: 31104000,
+    });
+
+    VaultContract::unlock_vault(&env, &contract_id, &vault_id).unwrap();
+    let vault = VaultContract::get_vault(&env, &contract_id, &vault_id).unwrap();
+    assert_eq!(vault.status, 2);
+    assert!(!VaultContract::is_locked(&env, &contract_id, &vault_id));
+}
+
+#[test]
+fn test_unlock_vault_after_unlock_time() {
+    let (env, contract_id, owner, symbol, token) = setup();
+
+    let vault_id = VaultContract::create_vault(
+        &env,
+        &contract_id,
+        &owner,
+        &token,
+        &symbol,
+        &86400u64,
+    );
+
+    let unlock_time = VaultContract::get_unlock_time(&env, &contract_id, &vault_id);
+    env.ledger().set(soroban_sdk::LedgerInfo {
+        timestamp: unlock_time + 1,
+        protocol_version: 20,
+        sequence_number: 1234,
+        network_id: Default::default(),
+        base_reserve: 10,
+        min_persistent_entry_ttl: 10,
+        min_temp_entry_ttl: 10,
+        max_entry_ttl: 31104000,
+    });
+
+    VaultContract::unlock_vault(&env, &contract_id, &vault_id).unwrap();
+    let vault = VaultContract::get_vault(&env, &contract_id, &vault_id).unwrap();
+    assert_eq!(vault.status, 2);
+    assert!(!VaultContract::is_locked(&env, &contract_id, &vault_id));
+}
+
+#[test]
+#[should_panic(expected = "VaultAlreadyUnlocked")]
+fn test_unlock_vault_only_once() {
+    let (env, contract_id, owner, symbol, token) = setup();
+
+    let vault_id = VaultContract::create_vault(
+        &env,
+        &contract_id,
+        &owner,
+        &token,
+        &symbol,
+        &86400u64,
+    );
+
+    let unlock_time = VaultContract::get_unlock_time(&env, &contract_id, &vault_id);
+    env.ledger().set(soroban_sdk::LedgerInfo {
+        timestamp: unlock_time,
+        protocol_version: 20,
+        sequence_number: 1234,
+        network_id: Default::default(),
+        base_reserve: 10,
+        min_persistent_entry_ttl: 10,
+        min_temp_entry_ttl: 10,
+        max_entry_ttl: 31104000,
+    });
+
+    VaultContract::unlock_vault(&env, &contract_id, &vault_id).unwrap();
+    VaultContract::unlock_vault(&env, &contract_id, &vault_id).unwrap();
+}
+
+#[test]
 #[should_panic(expected = "Vault not found")]
 fn test_get_nonexistent_vault() {
     let (env, contract_id, _owner, _symbol, _token) = setup();

@@ -63,6 +63,13 @@ impl TimeHelper {
         TimeHelper::now(env) < timestamp
     }
 
+    /// Check whether a timestamp has been reached or passed.
+    /// This is the inverse of `is_future` and signals that a lock period
+    /// should be considered complete.
+    pub fn is_unlocked(env: &Env, timestamp: u64) -> bool {
+        !TimeHelper::is_future(env, timestamp)
+    }
+
     /// Calculate seconds until a timestamp
     pub fn seconds_until(env: &Env, timestamp: u64) -> u64 {
         let now = TimeHelper::now(env);
