@@ -9,6 +9,7 @@ export const QUEUE_NAMES = {
   PAYMENT_PROCESSING: 'payment-processing',
   STELLAR_CONFIRMATION: 'stellar-confirmation',
   VAULT_RECONCILIATION: 'vault-reconciliation',
+  OUTBOX_PROCESSOR: 'outbox-processor',
 } as const;
 
 // Connection options for BullMQ
@@ -39,6 +40,7 @@ export const getEmailQueue = () => getQueue(QUEUE_NAMES.EMAIL);
 export const getPaymentQueue = () => getQueue(QUEUE_NAMES.PAYMENT_PROCESSING);
 export const getTransactionQueue = () => getQueue(QUEUE_NAMES.STELLAR_CONFIRMATION);
 export const getVaultQueue = () => getQueue(QUEUE_NAMES.VAULT_RECONCILIATION);
+export const getOutboxProcessorQueue = () => getQueue(QUEUE_NAMES.OUTBOX_PROCESSOR);
 
 export type StellarConfirmJob = {
   apiTransactionId: string;
