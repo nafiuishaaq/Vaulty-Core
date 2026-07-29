@@ -5,6 +5,7 @@ import { disconnectRedis } from './config/redis';
 import { initializeWorkers } from './jobs';
 import { closeQueueConnections } from './queues';
 import { redactError } from './utils/redact';
+import { stopOutboxProcessorSafe } from './jobs/outbox.processor';
 
 process.on('uncaughtException', (err) => {
   console.error('Uncaught exception:', redactError(err));
@@ -40,6 +41,7 @@ const shutdown = async (signal: string): Promise<void> => {
       });
     }
 
+    await stopOutboxProcessorSafe();
     await Promise.allSettled([disconnectPrisma(), disconnectRedis(), closeQueueConnections()]);
     console.log('✅ Shutdown complete');
     process.exit(0);

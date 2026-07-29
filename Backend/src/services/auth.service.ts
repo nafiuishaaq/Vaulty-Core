@@ -16,7 +16,6 @@ import {
   verifyRefreshToken,
   TokenPayload,
 } from '../utils/jwt';
-import { queuePasswordResetEmail, queueVerificationEmail } from '../queues';
 import { parseRefreshTokenExpiryMs } from '../config';
 import { normalizeEmail, normalizePhoneNumber } from '../utils/identity';
 import type {
@@ -28,6 +27,7 @@ import type {
   ResendVerificationEmailInput,
   UpdateProfileInput,
 } from '../validators/auth.validator';
+import { OutboxEventType } from '@prisma/client';
 
 const EMAIL_VERIFICATION_TOKEN_EXPIRY_MINUTES = 60 * 24;
 const PASSWORD_RESET_TOKEN_EXPIRY_MINUTES = 60;
@@ -136,11 +136,20 @@ export class AuthService {
     const expiresAt = generateTokenExpiry(EMAIL_VERIFICATION_TOKEN_EXPIRY_MINUTES);
     await userRepository.createEmailVerificationToken(user.id, verificationTokenHash, expiresAt);
 
-    await queueVerificationEmail({
-      to: user.email,
-      userId: user.id,
-      token: verificationToken,
-      expiresAt: expiresAt.toISOString(),
+    await prisma.$transaction(async (tx) => {
+      await prisma.outboxEvent.create({
+        data: {
+          eventType: OutboxEventType.EMAIL_VERIFICATION,
+          aggregateId: user.id,
+          aggregateType: 'User',
+          payload: JSON.stringify({
+            to: user.email,
+            userId: user.id,
+            token: verificationToken,
+            expiresAt: expiresAt.toISOString(),
+          }),
+        } as any,
+      });
     });
 
     return { user };
@@ -197,9 +206,6 @@ export class AuthService {
       }
 
       if (session.revokedAt) {
-        // A revoked token was replayed. If it was revoked because of reuse, the
-        // family is already dead; otherwise treat this as reuse and revoke the
-        // whole family as a precaution.
         const familyId = (payload as TokenPayload).familyId || session.familyId;
         await userRepository.revokeRefreshSessionFamily(familyId, 'REUSE_DETECTED', tokenHash);
         await userRepository.revokeRefreshSession(tokenHash, 'REUSE_DETECTED');
@@ -217,10 +223,6 @@ export class AuthService {
 
       const familyId = session.familyId;
 
-      // Atomically rotate: revoke the current token, then issue a new one in the
-      // same family. Using a transaction keeps the window race-free. If the
-      // session was already rotated by another request, fail instead of issuing
-      // a second replacement token.
       const newTokens = await prisma.$transaction(async (tx) => {
         const updateResult = await tx.refreshSession.updateMany({
           where: { tokenHash, revokedAt: null },
@@ -264,11 +266,20 @@ export class AuthService {
     const expiresAt = generateTokenExpiry(PASSWORD_RESET_TOKEN_EXPIRY_MINUTES);
     await userRepository.createPasswordResetToken(user.id, resetTokenHash, expiresAt);
 
-    await queuePasswordResetEmail({
-      to: user.email,
-      userId: user.id,
-      token: resetToken,
-      expiresAt: expiresAt.toISOString(),
+    await prisma.$transaction(async (tx) => {
+      await prisma.outboxEvent.create({
+        data: {
+          eventType: OutboxEventType.PASSWORD_RESET,
+          aggregateId: user.id,
+          aggregateType: 'User',
+          payload: JSON.stringify({
+            to: user.email,
+            userId: user.id,
+            token: resetToken,
+            expiresAt: expiresAt.toISOString(),
+          }),
+        } as any,
+      });
     });
 
     return { message: 'If the email exists, a reset link has been sent' };
@@ -319,11 +330,21 @@ export class AuthService {
     const expiresAt = generateTokenExpiry(EMAIL_VERIFICATION_TOKEN_EXPIRY_MINUTES);
 
     await userRepository.createEmailVerificationToken(user.id, verificationTokenHash, expiresAt);
-    await queueVerificationEmail({
-      to: user.email,
-      userId: user.id,
-      token: verificationToken,
-      expiresAt: expiresAt.toISOString(),
+
+    await prisma.$transaction(async (tx) => {
+      await prisma.outboxEvent.create({
+        data: {
+          eventType: OutboxEventType.EMAIL_RESEND,
+          aggregateId: user.id,
+          aggregateType: 'User',
+          payload: JSON.stringify({
+            to: user.email,
+            userId: user.id,
+            token: verificationToken,
+            expiresAt: expiresAt.toISOString(),
+          }),
+        } as any,
+      });
     });
 
     return { message };
@@ -347,12 +368,9 @@ export class AuthService {
     if (data.firstName !== undefined) updateData.firstName = data.firstName;
     if (data.lastName !== undefined) updateData.lastName = data.lastName;
     
-    // If phone number is being updated, check for uniqueness
     if (data.phoneNumber !== undefined) {
-      // Normalize the phone number (it's already normalized by the validator, but just to be safe)
       const normalizedPhone = data.phoneNumber;
       
-      // Check if another user has this phone number
       const existingUserWithPhone = await userRepository.findByPhoneNumber(normalizedPhone);
       if (existingUserWithPhone && existingUserWithPhone.id !== userId) {
         throw new AppError('User with this phone number already exists', 409);
@@ -361,7 +379,6 @@ export class AuthService {
       updateData.phoneNumber = normalizedPhone;
     }
 
-    // If there's nothing to update, just return the current user
     if (Object.keys(updateData).length === 0) {
       return user;
     }

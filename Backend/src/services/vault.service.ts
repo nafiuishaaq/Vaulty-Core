@@ -1,9 +1,10 @@
-import { VaultStatus, VaultTransactionType, VaultTransactionStatus, VaultType } from '@prisma/client';
+import { VaultStatus, VaultTransactionType, VaultTransactionStatus, VaultType, OutboxEventType, VaultEventType, StellarSubmissionStatus } from '@prisma/client';
 import { vaultRepository } from '../repositories/vault.repository';
 import { vaultTransactionRepository } from '../repositories/vault-transaction.repository';
 import { vaultEventRepository } from '../repositories/vault-event.repository';
 import { AppError } from '../utils/AppError';
 import { getVaultQueue } from '../queues';
+import { prisma } from '../database';
 import type {
   CreateVaultInput,
   DepositToVaultInput,
@@ -23,32 +24,39 @@ export class VaultService {
       return existing;
     }
 
-    const vault = await vaultRepository.create({
-      userId,
-      name: input.name,
-      description: input.description,
-      targetAmount: input.targetAmount,
-      lockPeriod: input.lockPeriod,
-      assetCode: input.assetCode,
-      assetIssuer: input.assetIssuer,
-      contractAddress: input.contractAddress,
-      onChainVaultId: input.onChainVaultId,
-      type: input.type,
-      goalDescription: input.goalDescription,
-    });
+    const vault = await prisma.$transaction(async (tx) => {
+      const createdVault = await tx.savingsVault.create({
+        data: {
+          userId,
+          name: input.name,
+          description: input.description,
+          targetAmount: input.targetAmount,
+          lockPeriod: input.lockPeriod,
+          assetCode: input.assetCode,
+          assetIssuer: input.assetIssuer,
+          contractAddress: input.contractAddress,
+          onChainVaultId: input.onChainVaultId,
+          type: input.type,
+          goalDescription: input.goalDescription,
+        },
+      });
 
-    await vaultEventRepository.create({
-      vaultId: vault.id,
-      userId,
-      eventType: 'CREATED',
-      status: 'CONFIRMED',
-      payload: JSON.stringify({
-        name: vault.name,
-        targetAmount: vault.targetAmount,
-        assetCode: vault.assetCode,
-        type: vault.type,
-      }),
-      confirmedAt: new Date(),
+      await prisma.outboxEvent.create({
+        data: {
+        data: {
+          eventType: OutboxEventType.VAULT_CLOSE,
+          aggregateId: createdVault.id,
+          aggregateType: 'SavingsVault',
+          payload: JSON.stringify({
+            name: createdVault.name,
+            targetAmount: createdVault.targetAmount,
+            assetCode: createdVault.assetCode,
+            type: createdVault.type,
+          }),
+        },
+      });
+
+      return createdVault;
     });
 
     return vault;
@@ -115,39 +123,48 @@ export class VaultService {
     }
 
     const reference = generateReference('DEP');
-    const transaction = await vaultTransactionRepository.create({
-      vaultId,
-      userId,
-      type: 'DEPOSIT',
-      status: 'PENDING',
-      amount: input.amount,
-      description: input.description,
-      reference,
-      idempotencyKey: input.idempotencyKey,
-      onChainVaultId: vault.onChainVaultId,
-    });
 
-    await vaultEventRepository.create({
-      vaultId,
-      userId,
-      eventType: 'DEPOSIT',
-      status: 'REQUESTED',
-      payload: JSON.stringify({
-        amount: input.amount,
-        reference,
-        type: 'DEPOSIT',
-      }),
+    const result = await prisma.$transaction(async (tx) => {
+      const transaction = await tx.vaultTransaction.create({
+        data: {
+          vaultId,
+          userId,
+          type: 'DEPOSIT',
+          status: 'PENDING',
+          amount: input.amount,
+          description: input.description,
+          reference,
+          idempotencyKey: input.idempotencyKey,
+          onChainVaultId: vault.onChainVaultId,
+        },
+      });
+
+      await prisma.outboxEvent.create({
+        data: {
+        data: {
+          eventType: OutboxEventType.VAULT_DEPOSIT,
+          aggregateId: transaction.id,
+          aggregateType: 'VaultTransaction',
+          payload: JSON.stringify({
+            amount: input.amount,
+            reference,
+            type: 'DEPOSIT',
+          }),
+        },
+      });
+
+      return transaction;
     });
 
     const queue = getVaultQueue();
-    await queue.add('vault-reconcile', { vaultTransactionId: transaction.id, type: 'DEPOSIT' }, {
+    await queue.add('vault-reconcile', { vaultTransactionId: result.id, type: 'DEPOSIT' }, {
       attempts: 5,
       backoff: { type: 'exponential', delay: 5000 },
       removeOnComplete: true,
       removeOnFail: false,
     });
 
-    return transaction;
+    return result;
   }
 
   /**
@@ -184,39 +201,48 @@ export class VaultService {
     }
 
     const reference = generateReference('WTH');
-    const transaction = await vaultTransactionRepository.create({
-      vaultId,
-      userId,
-      type: 'WITHDRAWAL',
-      status: 'PENDING',
-      amount: input.amount,
-      description: input.description,
-      reference,
-      idempotencyKey: input.idempotencyKey,
-      onChainVaultId: vault.onChainVaultId,
-    });
 
-    await vaultEventRepository.create({
-      vaultId,
-      userId,
-      eventType: 'WITHDRAWAL',
-      status: 'REQUESTED',
-      payload: JSON.stringify({
-        amount: input.amount,
-        reference,
-        type: 'WITHDRAWAL',
-      }),
+    const result = await prisma.$transaction(async (tx) => {
+      const transaction = await tx.vaultTransaction.create({
+        data: {
+          vaultId,
+          userId,
+          type: 'WITHDRAWAL',
+          status: 'PENDING',
+          amount: input.amount,
+          description: input.description,
+          reference,
+          idempotencyKey: input.idempotencyKey,
+          onChainVaultId: vault.onChainVaultId,
+        },
+      });
+
+      await prisma.outboxEvent.create({
+        data: {
+        data: {
+          eventType: OutboxEventType.VAULT_WITHDRAWAL,
+          aggregateId: transaction.id,
+          aggregateType: 'VaultTransaction',
+          payload: JSON.stringify({
+            amount: input.amount,
+            reference,
+            type: 'WITHDRAWAL',
+          }),
+        },
+      });
+
+      return transaction;
     });
 
     const queue = getVaultQueue();
-    await queue.add('vault-reconcile', { vaultTransactionId: transaction.id, type: 'WITHDRAWAL' }, {
+    await queue.add('vault-reconcile', { vaultTransactionId: result.id, type: 'WITHDRAWAL' }, {
       attempts: 5,
       backoff: { type: 'exponential', delay: 5000 },
       removeOnComplete: true,
       removeOnFail: false,
     });
 
-    return transaction;
+    return result;
   }
 
   /**
@@ -238,16 +264,31 @@ export class VaultService {
       unlocksAt,
     });
 
-    await vaultEventRepository.create({
-      vaultId,
-      userId,
-      eventType: 'LOCK',
-      status: 'CONFIRMED',
-      payload: JSON.stringify({
-        lockPeriod: input.lockPeriod,
-        unlocksAt: unlocksAt.toISOString(),
-      }),
-      confirmedAt: new Date(),
+    await prisma.$transaction(async (tx) => {
+      await tx.vaultEvent.create({
+        data: {
+          vaultId,
+          userId,
+          eventType: 'LOCK' as VaultEventType,
+          status: 'CONFIRMED' as StellarSubmissionStatus,
+          payload: JSON.stringify({
+            lockPeriod: input.lockPeriod,
+            unlocksAt: unlocksAt.toISOString(),
+          }),
+          confirmedAt: new Date(),
+        },
+      });
+
+      await prisma.outboxEvent.create({
+        data: {
+        eventType: OutboxEventType.VAULT_LOCK,
+        aggregateId: vaultId,
+        aggregateType: 'SavingsVault',
+        payload: JSON.stringify({
+          lockPeriod: input.lockPeriod,
+          unlocksAt: unlocksAt.toISOString(),
+        }),
+      });
     });
 
     return updated;
@@ -271,13 +312,25 @@ export class VaultService {
       status: VaultStatus.ACTIVE,
     });
 
-    await vaultEventRepository.create({
-      vaultId,
-      userId,
-      eventType: 'UNLOCK',
-      status: 'CONFIRMED',
-      payload: JSON.stringify({ unlockedAt: new Date().toISOString() }),
-      confirmedAt: new Date(),
+    await prisma.$transaction(async (tx) => {
+      await tx.vaultEvent.create({
+        data: {
+          vaultId,
+          userId,
+          eventType: 'UNLOCK' as VaultEventType,
+          status: 'CONFIRMED' as StellarSubmissionStatus,
+          payload: JSON.stringify({ unlockedAt: new Date().toISOString() }),
+          confirmedAt: new Date(),
+        },
+      });
+
+      await prisma.outboxEvent.create({
+        data: {
+        eventType: OutboxEventType.VAULT_UNLOCK,
+        aggregateId: vaultId,
+        aggregateType: 'SavingsVault',
+        payload: JSON.stringify({ unlockedAt: new Date().toISOString() }),
+      });
     });
 
     return updated;
@@ -301,13 +354,25 @@ export class VaultService {
       status: VaultStatus.CLOSED,
     });
 
-    await vaultEventRepository.create({
-      vaultId,
-      userId,
-      eventType: 'CLOSE',
-      status: 'CONFIRMED',
-      payload: JSON.stringify({ closedAt: new Date().toISOString() }),
-      confirmedAt: new Date(),
+    await prisma.$transaction(async (tx) => {
+      await tx.vaultEvent.create({
+        data: {
+          vaultId,
+          userId,
+          eventType: 'CLOSE' as VaultEventType,
+          status: 'CONFIRMED' as StellarSubmissionStatus,
+          payload: JSON.stringify({ closedAt: new Date().toISOString() }),
+          confirmedAt: new Date(),
+        },
+      });
+
+      await prisma.outboxEvent.create({
+        data: {
+        eventType: OutboxEventType.VAULT_CLOSE,
+        aggregateId: vaultId,
+        aggregateType: 'SavingsVault',
+        payload: JSON.stringify({ closedAt: new Date().toISOString() }),
+      });
     });
 
     return updated;

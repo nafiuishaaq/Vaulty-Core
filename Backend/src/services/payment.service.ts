@@ -1,5 +1,4 @@
-import { Prisma } from '@prisma/client';
-import type { PaymentDirection, PaymentStatus } from '@prisma/client';
+import { Prisma, PaymentDirection, PaymentStatus, OutboxEventType } from '@prisma/client';
 import { paymentRepository, VALID_TRANSITIONS, PAYMENT_STATUS } from '../repositories/payment.repository';
 import { paymentAuditLogRepository } from '../repositories/payment-audit.repository';
 import { anchorService } from './anchor.service';
@@ -39,19 +38,40 @@ export class PaymentService {
       return existing;
     }
 
-    const payment = await paymentRepository.create({
-      userId,
-      direction: 'DEPOSIT',
-      status: PAYMENT_STATUS.INITIATED,
-      amount: input.amount,
-      asset: input.asset,
-      method: input.method,
-      bankAccount: input.bankAccount,
-      accountName: input.accountName,
-      narration: input.narration,
-      idempotencyKey: input.idempotencyKey,
-      reference: generateReference('DEPOSIT'),
-      provider: 'ANCHOR',
+    const payment = await prisma.$transaction(async (tx) => {
+      const created = await tx.payment.create({
+        data: {
+          userId,
+          direction: 'DEPOSIT',
+          status: PAYMENT_STATUS.INITIATED,
+          amount: input.amount,
+          asset: input.asset,
+          method: input.method,
+          bankAccount: input.bankAccount,
+          accountName: input.accountName,
+          narration: input.narration,
+          idempotencyKey: input.idempotencyKey,
+          reference: generateReference('DEPOSIT'),
+          provider: 'ANCHOR',
+        },
+      });
+
+      await tx.outboxEvent.create({
+        data: {
+          eventType: OutboxEventType.PAYMENT_INITIATED,
+          aggregateId: created.id,
+          aggregateType: 'Payment',
+          payload: JSON.stringify({
+            paymentId: created.id,
+            direction: 'DEPOSIT',
+            amount: input.amount,
+            asset: input.asset,
+            reference: created.reference,
+          }),
+        },
+      });
+
+      return created;
     });
 
     await paymentAuditLogRepository.create({
@@ -72,19 +92,40 @@ export class PaymentService {
       return existing;
     }
 
-    const payment = await paymentRepository.create({
-      userId,
-      direction: 'WITHDRAWAL',
-      status: PAYMENT_STATUS.INITIATED,
-      amount: input.amount,
-      asset: input.asset,
-      method: input.method,
-      bankAccount: input.bankAccount,
-      accountName: input.accountName,
-      narration: input.narration,
-      idempotencyKey: input.idempotencyKey,
-      reference: generateReference('WITHDRAWAL'),
-      provider: 'ANCHOR',
+    const payment = await prisma.$transaction(async (tx) => {
+      const created = await tx.payment.create({
+        data: {
+          userId,
+          direction: 'WITHDRAWAL',
+          status: PAYMENT_STATUS.INITIATED,
+          amount: input.amount,
+          asset: input.asset,
+          method: input.method,
+          bankAccount: input.bankAccount,
+          accountName: input.accountName,
+          narration: input.narration,
+          idempotencyKey: input.idempotencyKey,
+          reference: generateReference('WITHDRAWAL'),
+          provider: 'ANCHOR',
+        },
+      });
+
+      await tx.outboxEvent.create({
+        data: {
+          eventType: OutboxEventType.PAYMENT_INITIATED,
+          aggregateId: created.id,
+          aggregateType: 'Payment',
+          payload: JSON.stringify({
+            paymentId: created.id,
+            direction: 'WITHDRAWAL',
+            amount: input.amount,
+            asset: input.asset,
+            reference: created.reference,
+          }),
+        },
+      });
+
+      return created;
     });
 
     await paymentAuditLogRepository.create({
@@ -172,6 +213,19 @@ export class PaymentService {
       newStatus: PAYMENT_STATUS.PENDING,
       description: 'Provider instructions requested',
       providerReference: instruction.reference,
+    });
+
+    await prisma.outboxEvent.create({
+      data: {
+        eventType: OutboxEventType.PAYMENT_INSTRUCTIONS,
+        aggregateId: paymentId,
+        aggregateType: 'Payment',
+        payload: JSON.stringify({
+          paymentId,
+          reference: instruction.reference,
+          direction: payment.direction,
+        }),
+      },
     });
 
     const queue = getPaymentQueue();
