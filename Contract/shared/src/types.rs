@@ -7,6 +7,9 @@ use soroban_sdk::{Address, BytesN, contracttype};
 pub enum VaultStatus {
     Active = 0,
     Locked = 1,
+    /// The lock period has completed and the vault has been explicitly
+    /// marked unlocked. This state is distinct from `Active` because it
+    /// indicates maturity has been reached.
     Unlocked = 2,
     Closed = 3,
     Liquidated = 4,

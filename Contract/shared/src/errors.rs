@@ -23,6 +23,7 @@ pub enum Error {
     LiquidationThreshold = 16,
     RewardAlreadyClaimed = 17,
     InvalidParameters = 18,
+    VaultAlreadyUnlocked = 55,
     PoolNotFound = 19,
     PoolAlreadyExists = 20,
     InsufficientLiquidity = 21,

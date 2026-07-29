@@ -81,7 +81,7 @@ pub struct VaultUnlocked {
 
 impl IntoVal<Env, Val> for VaultUnlocked {
     fn into_val(&self, env: &Env) -> Val {
-        (self.vault_id.clone(), self.unlock_time).into_val(env)
+        (self.vault_id.clone(), self.asset.clone(), self.unlock_time).into_val(env)
     }
 }
 

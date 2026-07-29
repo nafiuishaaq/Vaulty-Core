@@ -390,7 +390,7 @@ impl BorrowingContract {
             unlock_args.push_back(collateral_vault_id.clone().into_val(&env));
             env.invoke_contract::<()>(
                 &vault_contract,
-                &Symbol::new(&env, "unlock_vault"),
+                &Symbol::new(&env, "unlock_collateral_vault"),
                 unlock_args
             );
 
