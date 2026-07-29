@@ -43,7 +43,6 @@ export class VaultService {
 
       await prisma.outboxEvent.create({
         data: {
-        data: {
           eventType: OutboxEventType.VAULT_CLOSE,
           aggregateId: createdVault.id,
           aggregateType: 'SavingsVault',
@@ -141,7 +140,6 @@ export class VaultService {
 
       await prisma.outboxEvent.create({
         data: {
-        data: {
           eventType: OutboxEventType.VAULT_DEPOSIT,
           aggregateId: transaction.id,
           aggregateType: 'VaultTransaction',
@@ -219,7 +217,6 @@ export class VaultService {
 
       await prisma.outboxEvent.create({
         data: {
-        data: {
           eventType: OutboxEventType.VAULT_WITHDRAWAL,
           aggregateId: transaction.id,
           aggregateType: 'VaultTransaction',
@@ -281,13 +278,14 @@ export class VaultService {
 
       await prisma.outboxEvent.create({
         data: {
-        eventType: OutboxEventType.VAULT_LOCK,
-        aggregateId: vaultId,
-        aggregateType: 'SavingsVault',
-        payload: JSON.stringify({
-          lockPeriod: input.lockPeriod,
-          unlocksAt: unlocksAt.toISOString(),
-        }),
+          eventType: OutboxEventType.VAULT_LOCK,
+          aggregateId: vaultId,
+          aggregateType: 'SavingsVault',
+          payload: JSON.stringify({
+            lockPeriod: input.lockPeriod,
+            unlocksAt: unlocksAt.toISOString(),
+          }),
+        },
       });
     });
 
@@ -326,10 +324,11 @@ export class VaultService {
 
       await prisma.outboxEvent.create({
         data: {
-        eventType: OutboxEventType.VAULT_UNLOCK,
-        aggregateId: vaultId,
-        aggregateType: 'SavingsVault',
-        payload: JSON.stringify({ unlockedAt: new Date().toISOString() }),
+          eventType: OutboxEventType.VAULT_UNLOCK,
+          aggregateId: vaultId,
+          aggregateType: 'SavingsVault',
+          payload: JSON.stringify({ unlockedAt: new Date().toISOString() }),
+        },
       });
     });
 
@@ -368,10 +367,11 @@ export class VaultService {
 
       await prisma.outboxEvent.create({
         data: {
-        eventType: OutboxEventType.VAULT_CLOSE,
-        aggregateId: vaultId,
-        aggregateType: 'SavingsVault',
-        payload: JSON.stringify({ closedAt: new Date().toISOString() }),
+          eventType: OutboxEventType.VAULT_CLOSE,
+          aggregateId: vaultId,
+          aggregateType: 'SavingsVault',
+          payload: JSON.stringify({ closedAt: new Date().toISOString() }),
+        },
       });
     });
 

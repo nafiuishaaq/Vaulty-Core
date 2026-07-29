@@ -136,7 +136,7 @@ export class AuthService {
     const expiresAt = generateTokenExpiry(EMAIL_VERIFICATION_TOKEN_EXPIRY_MINUTES);
     await userRepository.createEmailVerificationToken(user.id, verificationTokenHash, expiresAt);
 
-    await prisma.$transaction(async (tx) => {
+    await prisma.$transaction(async () => {
       await prisma.outboxEvent.create({
         data: {
           eventType: OutboxEventType.EMAIL_VERIFICATION,
@@ -266,7 +266,7 @@ export class AuthService {
     const expiresAt = generateTokenExpiry(PASSWORD_RESET_TOKEN_EXPIRY_MINUTES);
     await userRepository.createPasswordResetToken(user.id, resetTokenHash, expiresAt);
 
-    await prisma.$transaction(async (tx) => {
+    await prisma.$transaction(async () => {
       await prisma.outboxEvent.create({
         data: {
           eventType: OutboxEventType.PASSWORD_RESET,
@@ -331,7 +331,7 @@ export class AuthService {
 
     await userRepository.createEmailVerificationToken(user.id, verificationTokenHash, expiresAt);
 
-    await prisma.$transaction(async (tx) => {
+    await prisma.$transaction(async () => {
       await prisma.outboxEvent.create({
         data: {
           eventType: OutboxEventType.EMAIL_RESEND,

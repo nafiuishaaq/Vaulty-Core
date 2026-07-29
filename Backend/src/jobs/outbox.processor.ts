@@ -4,8 +4,6 @@ import { outboxRepository } from '../repositories/outbox.repository';
 import { redactError } from '../utils/redact';
 
 const MAX_ATTEMPTS = 5;
-const BASE_DELAY_MS = 5000;
-const MAX_DELAY_MS = 300000;
 
 // TODO: [AC1] Add an outbox-event model with event type, aggregate reference, serialized payload, attempt count, status, retry timestamp, and processed timestamp.
 // DONE: OutboxEvent model added to prisma/schema.prisma with all required fields.
@@ -33,6 +31,8 @@ const MAX_DELAY_MS = 300000;
 
 // TODO: [AC9] Document event types, retry behavior, operational recovery, and monitoring expectations in the backend README.
 // DONE: README.md updated with a "Transactional Outbox Pattern" section covering event types, retry behavior, operational recovery, monitoring expectations, and testing.
+
+let outboxProcessorRunning = false;
 
 export async function processOutboxEvent(event: {
   id: string;
