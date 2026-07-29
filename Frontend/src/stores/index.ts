@@ -10,9 +10,28 @@ import {
   PaymentStatus,
   BankAccount,
   FeatureFlags,
+  User,
 } from '@/types'
+import { setAccessToken, setRefreshToken } from '@/lib/api'
 
-interface AppState {
+// ---------------------------------------------------------------------------
+// Auth slice
+// ---------------------------------------------------------------------------
+
+interface AuthState {
+  accessToken: string | null
+  refreshToken: string | null
+  user: User | null
+  setTokens: (accessToken: string | null, refreshToken: string | null) => void
+  setUser: (user: User | null) => void
+  clearAuth: () => void
+}
+
+// ---------------------------------------------------------------------------
+// Full AppState
+// ---------------------------------------------------------------------------
+
+interface AppState extends AuthState {
   wallet: WalletState
   /** True when the wallet's active network doesn't match the app's configured network. */
   networkMismatch: boolean
@@ -53,6 +72,16 @@ interface AppState {
 export const useAppStore = create<AppState>()(
   persist(
     (set) => ({
+      // -------------------------------------------------------------------
+      // Auth initial state
+      // -------------------------------------------------------------------
+      accessToken: null,
+      refreshToken: null,
+      user: null,
+
+      // -------------------------------------------------------------------
+      // Wallet initial state
+      // -------------------------------------------------------------------
       wallet: {
         isConnected: false,
         publicKey: null,
@@ -74,6 +103,27 @@ export const useAppStore = create<AppState>()(
         investments: false,
       },
 
+      // -------------------------------------------------------------------
+      // Auth actions
+      // -------------------------------------------------------------------
+      setTokens: (accessToken, refreshToken) => {
+        set({ accessToken, refreshToken })
+        // Keep the API client's in-memory token cache in sync
+        setAccessToken(accessToken)
+        setRefreshToken(refreshToken)
+      },
+
+      setUser: (user) => set({ user }),
+
+      clearAuth: () => {
+        set({ accessToken: null, refreshToken: null, user: null })
+        setAccessToken(null)
+        setRefreshToken(null)
+      },
+
+      // -------------------------------------------------------------------
+      // Wallet actions
+      // -------------------------------------------------------------------
       setWalletConnected: (publicKey, network) =>
         set({
           wallet: { isConnected: true, publicKey, network },
@@ -163,9 +213,9 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: 'vaulty-payments',
-      // Wallet state and networkMismatch are intentionally excluded from
-      // persistence — private keys must never be stored, and connection
-      // state must be re-validated on every page load via connectWallet().
+      // Wallet state, networkMismatch, and auth tokens are intentionally
+      // excluded from persistence — private keys must never be stored,
+      // connection/auth state must be re-validated on every page load.
       partialize: (state) => ({
         fundingOrders: state.fundingOrders,
         withdrawalOrders: state.withdrawalOrders,
