@@ -11,6 +11,7 @@ import {
   BankAccount,
   FeatureFlags,
   User,
+  TransactionNotification,
 } from '@/types'
 import { setAccessToken, setRefreshToken } from '@/lib/api'
 
@@ -43,6 +44,14 @@ interface AppState extends AuthState {
   fundingOrders: FundingOrder[]
   withdrawalOrders: WithdrawalOrder[]
   regulatedFeatures: FeatureFlags
+  transactionNotifications: TransactionNotification[]
+
+  // Transaction notification actions
+  addTransactionNotification: (notification: Omit<TransactionNotification, 'id' | 'createdAt' | 'updatedAt'>) => string
+  updateTransactionNotification: (id: string, updates: Partial<Omit<TransactionNotification, 'id' | 'createdAt'>>) => void
+  dismissTransactionNotification: (id: string) => void
+  removeTransactionNotification: (id: string) => void
+  findNotificationByIdempotencyKey: (idempotencyKey: string) => TransactionNotification | undefined
 
   setWalletConnected: (publicKey: string, network: 'testnet' | 'mainnet') => void
   setWalletDisconnected: () => void
@@ -96,6 +105,7 @@ export const useAppStore = create<AppState>()(
       selectedBankAccountId: null,
       fundingOrders: [],
       withdrawalOrders: [],
+      transactionNotifications: [],
       // Default all regulated features to disabled; updated by useFeatureFlags on mount.
       regulatedFeatures: {
         lending: false,
@@ -208,6 +218,71 @@ export const useAppStore = create<AppState>()(
             (order) => order.id !== id
           ),
         })),
+
+      // Transaction notification implementations
+      addTransactionNotification: (notification) => {
+        const id = crypto.randomUUID()
+        const now = new Date().toISOString()
+        const newNotification: TransactionNotification = {
+          ...notification,
+          id,
+          createdAt: now,
+          updatedAt: now,
+        }
+        
+        set((state) => {
+          // Prevent duplicates by idempotency key if provided
+          if (notification.idempotencyKey) {
+            const existing = state.transactionNotifications.find(
+              n => n.idempotencyKey === notification.idempotencyKey && n.status !== 'dismissed'
+            )
+            if (existing) {
+              return state
+            }
+          }
+          
+          return {
+            transactionNotifications: [...state.transactionNotifications, newNotification]
+          }
+        })
+        
+        return id
+      },
+
+      updateTransactionNotification: (id, updates) =>
+        set((state) => ({
+          transactionNotifications: state.transactionNotifications.map((notification) =>
+            notification.id === id
+              ? {
+                  ...notification,
+                  ...updates,
+                  updatedAt: new Date().toISOString(),
+                }
+              : notification
+          ),
+        })),
+
+      dismissTransactionNotification: (id) =>
+        set((state) => ({
+          transactionNotifications: state.transactionNotifications.map((notification) =>
+            notification.id === id
+              ? { ...notification, status: 'dismissed' as const, updatedAt: new Date().toISOString() }
+              : notification
+          ),
+        })),
+
+      removeTransactionNotification: (id) =>
+        set((state) => ({
+          transactionNotifications: state.transactionNotifications.filter(
+            (notification) => notification.id !== id
+          ),
+        })),
+
+      findNotificationByIdempotencyKey: (idempotencyKey) => {
+        return useAppStore.getState().transactionNotifications.find(
+          n => n.idempotencyKey === idempotencyKey
+        )
+      },
 
       setRegulatedFeatures: (flags) => set({ regulatedFeatures: flags }),
     }),

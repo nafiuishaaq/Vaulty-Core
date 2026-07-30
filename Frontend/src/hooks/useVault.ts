@@ -10,6 +10,8 @@ export function useVault() {
   const setVaults = useAppStore((s) => s.setVaults)
   const addFundingOrder = useAppStore((s) => s.addFundingOrder)
   const addWithdrawalOrder = useAppStore((s) => s.addWithdrawalOrder)
+  const addTransactionNotification = useAppStore((s) => s.addTransactionNotification)
+  const updateTransactionNotification = useAppStore((s) => s.updateTransactionNotification)
 
   const [isProcessing, setIsProcessing] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -27,25 +29,45 @@ export function useVault() {
     ) => {
       setIsProcessing(true)
       setError(null)
+      const idempotencyKey = generateIdempotencyKey()
+      // Add pending notification
+      const notificationId = addTransactionNotification({
+        type: 'vault',
+        action: 'Create vault',
+        status: 'pending',
+        message: `Creating your vault "${vaultData.name}"...`,
+        idempotencyKey,
+      })
+      
       try {
-        const idempotencyKey = generateIdempotencyKey()
         const { vault } = await apiClient.createVault({
           ...vaultData,
           targetAmount: Number(vaultData.targetAmount),
           idempotencyKey,
         })
         addVault(vault)
+        // Update to success
+        updateTransactionNotification(notificationId, {
+          status: 'success',
+          message: `Vault "${vault.name}" created successfully!`,
+          reference: vault.id,
+        })
         return vault
       } catch (err) {
         const message =
           err instanceof ApiError ? err.message : 'Failed to create vault'
         setError(message)
+        // Update to error
+        updateTransactionNotification(notificationId, {
+          status: 'error',
+          message: message,
+        })
         throw err
       } finally {
         setIsProcessing(false)
       }
     },
-    [addVault]
+    [addVault, addTransactionNotification, updateTransactionNotification]
   )
 
   const fetchVaults = useCallback(
@@ -92,8 +114,17 @@ export function useVault() {
     async (vaultId: string, amount: number) => {
       setIsProcessing(true)
       setError(null)
+      const idempotencyKey = generateIdempotencyKey()
+      // Add pending notification
+      const notificationId = addTransactionNotification({
+        type: 'vault',
+        action: 'Deposit to vault',
+        status: 'pending',
+        message: `Processing deposit of $${amount.toFixed(2)} to your vault...`,
+        idempotencyKey,
+      })
+      
       try {
-        const idempotencyKey = generateIdempotencyKey()
         const { transaction } = await apiClient.depositToVault(vaultId, {
           amount,
           idempotencyKey,
@@ -101,26 +132,47 @@ export function useVault() {
 
         // Reload vault data from backend to get the updated balance
         await fetchVaults()
+        
+        // Update to success
+        updateTransactionNotification(notificationId, {
+          status: 'success',
+          message: `Successfully deposited $${amount.toFixed(2)} to your vault!`,
+          reference: transaction.id,
+        })
 
         return transaction
       } catch (err) {
         const message =
           err instanceof ApiError ? err.message : 'Failed to deposit'
         setError(message)
+        // Update to error
+        updateTransactionNotification(notificationId, {
+          status: 'error',
+          message: message,
+        })
         throw err
       } finally {
         setIsProcessing(false)
       }
     },
-    [fetchVaults]
+    [fetchVaults, addTransactionNotification, updateTransactionNotification]
   )
 
   const withdrawFromVault = useCallback(
     async (vaultId: string, amount: number) => {
       setIsProcessing(true)
       setError(null)
+      const idempotencyKey = generateIdempotencyKey()
+      // Add pending notification
+      const notificationId = addTransactionNotification({
+        type: 'vault',
+        action: 'Withdraw from vault',
+        status: 'pending',
+        message: `Processing withdrawal of $${amount.toFixed(2)} from your vault...`,
+        idempotencyKey,
+      })
+      
       try {
-        const idempotencyKey = generateIdempotencyKey()
         const { transaction } = await apiClient.withdrawFromVault(vaultId, {
           amount,
           idempotencyKey,
@@ -128,18 +180,30 @@ export function useVault() {
 
         // Reload vault data from backend
         await fetchVaults()
+        
+        // Update to success
+        updateTransactionNotification(notificationId, {
+          status: 'success',
+          message: `Successfully withdrew $${amount.toFixed(2)} from your vault!`,
+          reference: transaction.id,
+        })
 
         return transaction
       } catch (err) {
         const message =
           err instanceof ApiError ? err.message : 'Failed to withdraw'
         setError(message)
+        // Update to error
+        updateTransactionNotification(notificationId, {
+          status: 'error',
+          message: message,
+        })
         throw err
       } finally {
         setIsProcessing(false)
       }
     },
-    [fetchVaults]
+    [fetchVaults, addTransactionNotification, updateTransactionNotification]
   )
 
   // -------------------------------------------------------------------------
@@ -150,61 +214,124 @@ export function useVault() {
     async (vaultId: string, lockPeriod: number) => {
       setIsProcessing(true)
       setError(null)
+      const idempotencyKey = generateIdempotencyKey()
+      // Add pending notification
+      const notificationId = addTransactionNotification({
+        type: 'vault',
+        action: 'Lock vault',
+        status: 'pending',
+        message: 'Locking your vault...',
+        idempotencyKey,
+      })
+      
       try {
         const { vault } = await apiClient.lockVault(vaultId, { lockPeriod })
         updateVault(vaultId, vault)
+        // Update to success
+        updateTransactionNotification(notificationId, {
+          status: 'success',
+          message: `Vault locked successfully for ${lockPeriod} days!`,
+          reference: vault.id,
+        })
         return vault
       } catch (err) {
         const message =
           err instanceof ApiError ? err.message : 'Failed to lock vault'
         setError(message)
+        // Update to error
+        updateTransactionNotification(notificationId, {
+          status: 'error',
+          message: message,
+        })
         throw err
       } finally {
         setIsProcessing(false)
       }
     },
-    [updateVault]
+    [updateVault, addTransactionNotification, updateTransactionNotification]
   )
 
   const unlockVault = useCallback(
     async (vaultId: string) => {
       setIsProcessing(true)
       setError(null)
+      const idempotencyKey = generateIdempotencyKey()
+      // Add pending notification
+      const notificationId = addTransactionNotification({
+        type: 'vault',
+        action: 'Unlock vault',
+        status: 'pending',
+        message: 'Unlocking your vault...',
+        idempotencyKey,
+      })
+      
       try {
         const { vault } = await apiClient.unlockVault(vaultId)
         updateVault(vaultId, vault)
+        // Update to success
+        updateTransactionNotification(notificationId, {
+          status: 'success',
+          message: 'Vault unlocked successfully!',
+          reference: vault.id,
+        })
         return vault
       } catch (err) {
         const message =
           err instanceof ApiError ? err.message : 'Failed to unlock vault'
         setError(message)
+        // Update to error
+        updateTransactionNotification(notificationId, {
+          status: 'error',
+          message: message,
+        })
         throw err
       } finally {
         setIsProcessing(false)
       }
     },
-    [updateVault]
+    [updateVault, addTransactionNotification, updateTransactionNotification]
   )
 
   const closeVault = useCallback(
     async (vaultId: string) => {
       setIsProcessing(true)
       setError(null)
+      const idempotencyKey = generateIdempotencyKey()
+      // Add pending notification
+      const notificationId = addTransactionNotification({
+        type: 'vault',
+        action: 'Close vault',
+        status: 'pending',
+        message: 'Closing your vault...',
+        idempotencyKey,
+      })
+      
       try {
         const { vault } = await apiClient.closeVault(vaultId)
         // Reload vaults from backend to get the updated list
         await fetchVaults()
+        // Update to success
+        updateTransactionNotification(notificationId, {
+          status: 'success',
+          message: 'Vault closed successfully!',
+          reference: vault.id,
+        })
         return vault
       } catch (err) {
         const message =
           err instanceof ApiError ? err.message : 'Failed to close vault'
         setError(message)
+        // Update to error
+        updateTransactionNotification(notificationId, {
+          status: 'error',
+          message: message,
+        })
         throw err
       } finally {
         setIsProcessing(false)
       }
     },
-    [fetchVaults]
+    [fetchVaults, addTransactionNotification, updateTransactionNotification]
   )
 
   // -------------------------------------------------------------------------
