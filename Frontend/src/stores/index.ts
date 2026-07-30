@@ -11,6 +11,7 @@ import {
   BankAccount,
   FeatureFlags,
   User,
+  TransactionNotification,
 } from '@/types'
 import { setAccessToken, setRefreshToken } from '@/lib/api'
 
