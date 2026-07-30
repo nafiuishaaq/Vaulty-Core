@@ -219,6 +219,71 @@ export const useAppStore = create<AppState>()(
           ),
         })),
 
+      // Transaction notification implementations
+      addTransactionNotification: (notification) => {
+        const id = crypto.randomUUID()
+        const now = new Date().toISOString()
+        const newNotification: TransactionNotification = {
+          ...notification,
+          id,
+          createdAt: now,
+          updatedAt: now,
+        }
+        
+        set((state) => {
+          // Prevent duplicates by idempotency key if provided
+          if (notification.idempotencyKey) {
+            const existing = state.transactionNotifications.find(
+              n => n.idempotencyKey === notification.idempotencyKey && n.status !== 'dismissed'
+            )
+            if (existing) {
+              return state
+            }
+          }
+          
+          return {
+            transactionNotifications: [...state.transactionNotifications, newNotification]
+          }
+        })
+        
+        return id
+      },
+
+      updateTransactionNotification: (id, updates) =>
+        set((state) => ({
+          transactionNotifications: state.transactionNotifications.map((notification) =>
+            notification.id === id
+              ? {
+                  ...notification,
+                  ...updates,
+                  updatedAt: new Date().toISOString(),
+                }
+              : notification
+          ),
+        })),
+
+      dismissTransactionNotification: (id) =>
+        set((state) => ({
+          transactionNotifications: state.transactionNotifications.map((notification) =>
+            notification.id === id
+              ? { ...notification, status: 'dismissed' as const, updatedAt: new Date().toISOString() }
+              : notification
+          ),
+        })),
+
+      removeTransactionNotification: (id) =>
+        set((state) => ({
+          transactionNotifications: state.transactionNotifications.filter(
+            (notification) => notification.id !== id
+          ),
+        })),
+
+      findNotificationByIdempotencyKey: (idempotencyKey) => {
+        return useAppStore.getState().transactionNotifications.find(
+          n => n.idempotencyKey === idempotencyKey
+        )
+      },
+
       setRegulatedFeatures: (flags) => set({ regulatedFeatures: flags }),
     }),
     {
