@@ -10,6 +10,8 @@ export function useVault() {
   const setVaults = useAppStore((s) => s.setVaults)
   const addFundingOrder = useAppStore((s) => s.addFundingOrder)
   const addWithdrawalOrder = useAppStore((s) => s.addWithdrawalOrder)
+  const addTransactionNotification = useAppStore((s) => s.addTransactionNotification)
+  const updateTransactionNotification = useAppStore((s) => s.updateTransactionNotification)
 
   const [isProcessing, setIsProcessing] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -27,25 +29,45 @@ export function useVault() {
     ) => {
       setIsProcessing(true)
       setError(null)
+      const idempotencyKey = generateIdempotencyKey()
+      // Add pending notification
+      const notificationId = addTransactionNotification({
+        type: 'vault',
+        action: 'Create vault',
+        status: 'pending',
+        message: `Creating your vault "${vaultData.name}"...`,
+        idempotencyKey,
+      })
+      
       try {
-        const idempotencyKey = generateIdempotencyKey()
         const { vault } = await apiClient.createVault({
           ...vaultData,
           targetAmount: Number(vaultData.targetAmount),
           idempotencyKey,
         })
         addVault(vault)
+        // Update to success
+        updateTransactionNotification(notificationId, {
+          status: 'success',
+          message: `Vault "${vault.name}" created successfully!`,
+          reference: vault.id,
+        })
         return vault
       } catch (err) {
         const message =
           err instanceof ApiError ? err.message : 'Failed to create vault'
         setError(message)
+        // Update to error
+        updateTransactionNotification(notificationId, {
+          status: 'error',
+          message: message,
+        })
         throw err
       } finally {
         setIsProcessing(false)
       }
     },
-    [addVault]
+    [addVault, addTransactionNotification, updateTransactionNotification]
   )
 
   const fetchVaults = useCallback(
