@@ -1,6 +1,8 @@
 import type { Metadata } from 'next'
 import './globals.css'
 import { WalletAccountMenu } from '@/components/WalletAccountMenu'
+import TransactionToast from '@/components/TransactionToast'
+import { Suspense } from 'react'
 
 export const metadata: Metadata = {
   title: 'Vaulty — Save Consistently. Grow Your Wealth.',
@@ -23,6 +25,16 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </header>
 
         <main>{children}</main>
+        <Suspense fallback={null}>
+          <TransactionToast />
+        </Suspense>
+        {/* Screen reader announcer for transaction notifications */}
+        <div
+          id="sr-announcer"
+          className="sr-only"
+          aria-live="polite"
+          aria-atomic="true"
+        />
       </body>
     </html>
   )
