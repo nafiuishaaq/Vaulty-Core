@@ -105,6 +105,7 @@ export const useAppStore = create<AppState>()(
       selectedBankAccountId: null,
       fundingOrders: [],
       withdrawalOrders: [],
+      transactionNotifications: [],
       // Default all regulated features to disabled; updated by useFeatureFlags on mount.
       regulatedFeatures: {
         lending: false,
