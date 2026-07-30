@@ -10,9 +10,29 @@ import {
   PaymentStatus,
   BankAccount,
   FeatureFlags,
+  User,
+  TransactionNotification,
 } from '@/types'
+import { setAccessToken, setRefreshToken } from '@/lib/api'
 
-interface AppState {
+// ---------------------------------------------------------------------------
+// Auth slice
+// ---------------------------------------------------------------------------
+
+interface AuthState {
+  accessToken: string | null
+  refreshToken: string | null
+  user: User | null
+  setTokens: (accessToken: string | null, refreshToken: string | null) => void
+  setUser: (user: User | null) => void
+  clearAuth: () => void
+}
+
+// ---------------------------------------------------------------------------
+// Full AppState
+// ---------------------------------------------------------------------------
+
+interface AppState extends AuthState {
   wallet: WalletState
   /** True when the wallet's active network doesn't match the app's configured network. */
   networkMismatch: boolean
@@ -24,6 +44,14 @@ interface AppState {
   fundingOrders: FundingOrder[]
   withdrawalOrders: WithdrawalOrder[]
   regulatedFeatures: FeatureFlags
+  transactionNotifications: TransactionNotification[]
+
+  // Transaction notification actions
+  addTransactionNotification: (notification: Omit<TransactionNotification, 'id' | 'createdAt' | 'updatedAt'>) => string
+  updateTransactionNotification: (id: string, updates: Partial<Omit<TransactionNotification, 'id' | 'createdAt'>>) => void
+  dismissTransactionNotification: (id: string) => void
+  removeTransactionNotification: (id: string) => void
+  findNotificationByIdempotencyKey: (idempotencyKey: string) => TransactionNotification | undefined
 
   setWalletConnected: (publicKey: string, network: 'testnet' | 'mainnet') => void
   setWalletDisconnected: () => void
@@ -53,6 +81,16 @@ interface AppState {
 export const useAppStore = create<AppState>()(
   persist(
     (set) => ({
+      // -------------------------------------------------------------------
+      // Auth initial state
+      // -------------------------------------------------------------------
+      accessToken: null,
+      refreshToken: null,
+      user: null,
+
+      // -------------------------------------------------------------------
+      // Wallet initial state
+      // -------------------------------------------------------------------
       wallet: {
         isConnected: false,
         publicKey: null,
@@ -67,6 +105,7 @@ export const useAppStore = create<AppState>()(
       selectedBankAccountId: null,
       fundingOrders: [],
       withdrawalOrders: [],
+      transactionNotifications: [],
       // Default all regulated features to disabled; updated by useFeatureFlags on mount.
       regulatedFeatures: {
         lending: false,
@@ -74,6 +113,27 @@ export const useAppStore = create<AppState>()(
         investments: false,
       },
 
+      // -------------------------------------------------------------------
+      // Auth actions
+      // -------------------------------------------------------------------
+      setTokens: (accessToken, refreshToken) => {
+        set({ accessToken, refreshToken })
+        // Keep the API client's in-memory token cache in sync
+        setAccessToken(accessToken)
+        setRefreshToken(refreshToken)
+      },
+
+      setUser: (user) => set({ user }),
+
+      clearAuth: () => {
+        set({ accessToken: null, refreshToken: null, user: null })
+        setAccessToken(null)
+        setRefreshToken(null)
+      },
+
+      // -------------------------------------------------------------------
+      // Wallet actions
+      // -------------------------------------------------------------------
       setWalletConnected: (publicKey, network) =>
         set({
           wallet: { isConnected: true, publicKey, network },
@@ -159,13 +219,78 @@ export const useAppStore = create<AppState>()(
           ),
         })),
 
+      // Transaction notification implementations
+      addTransactionNotification: (notification) => {
+        const id = crypto.randomUUID()
+        const now = new Date().toISOString()
+        const newNotification: TransactionNotification = {
+          ...notification,
+          id,
+          createdAt: now,
+          updatedAt: now,
+        }
+        
+        set((state) => {
+          // Prevent duplicates by idempotency key if provided
+          if (notification.idempotencyKey) {
+            const existing = state.transactionNotifications.find(
+              n => n.idempotencyKey === notification.idempotencyKey && n.status !== 'dismissed'
+            )
+            if (existing) {
+              return state
+            }
+          }
+          
+          return {
+            transactionNotifications: [...state.transactionNotifications, newNotification]
+          }
+        })
+        
+        return id
+      },
+
+      updateTransactionNotification: (id, updates) =>
+        set((state) => ({
+          transactionNotifications: state.transactionNotifications.map((notification) =>
+            notification.id === id
+              ? {
+                  ...notification,
+                  ...updates,
+                  updatedAt: new Date().toISOString(),
+                }
+              : notification
+          ),
+        })),
+
+      dismissTransactionNotification: (id) =>
+        set((state) => ({
+          transactionNotifications: state.transactionNotifications.map((notification) =>
+            notification.id === id
+              ? { ...notification, status: 'dismissed' as const, updatedAt: new Date().toISOString() }
+              : notification
+          ),
+        })),
+
+      removeTransactionNotification: (id) =>
+        set((state) => ({
+          transactionNotifications: state.transactionNotifications.filter(
+            (notification) => notification.id !== id
+          ),
+        })),
+
+      findNotificationByIdempotencyKey: (idempotencyKey) => {
+        return useAppStore.getState().transactionNotifications.find(
+          n => n.idempotencyKey === idempotencyKey
+        )
+      },
+
       setRegulatedFeatures: (flags) => set({ regulatedFeatures: flags }),
     }),
     {
       name: 'vaulty-payments',
-      // Wallet state and networkMismatch are intentionally excluded from
-      // persistence — private keys must never be stored, and connection
-      // state must be re-validated on every page load via connectWallet().
+      // Wallet state, networkMismatch, and auth tokens are intentionally
+      // excluded from persistence — private keys must never be stored,
+      // connection/auth state must be re-validated on every page load.
       partialize: (state) => ({
         fundingOrders: state.fundingOrders,
         withdrawalOrders: state.withdrawalOrders,

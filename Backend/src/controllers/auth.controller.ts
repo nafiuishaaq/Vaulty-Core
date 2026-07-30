@@ -112,6 +112,24 @@ export class AuthController {
     }
   }
 
+  async updateProfile(req: Request, res: Response, next: NextFunction) {
+    try {
+      const userId = (req as any).user?.userId;
+      if (!userId) {
+        throw new AppError('User not authenticated', 401);
+      }
+
+      const user = await authService.updateProfile(userId, req.body);
+      res.status(200).json({
+        success: true,
+        message: 'Profile updated successfully',
+        data: { user },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async logout(req: Request, res: Response, next: NextFunction) {
     try {
       const userId = (req as any).user?.userId;

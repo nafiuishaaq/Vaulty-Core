@@ -24,6 +24,12 @@
   .input-field {
     @apply w-full px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent;
   }
+  
+  .sr-only {
+    @apply absolute w-px h-px p-0 -m-px overflow-hidden whitespace-nowrap border-0;
+    clip: rect(0, 0, 0, 0);
+    clip-path: inset(50%);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -1,6 +1,8 @@
 import type { Metadata } from 'next'
 import './globals.css'
-import { WalletButton } from '@/components/WalletButton'
+import { WalletAccountMenu } from '@/components/WalletAccountMenu'
+import TransactionToast from '@/components/TransactionToast'
+import { Suspense } from 'react'
 
 export const metadata: Metadata = {
   title: 'Vaulty — Save Consistently. Grow Your Wealth.',
@@ -17,12 +19,22 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <header className="border-b border-slate-200 bg-white shadow-sm">
           <div className="container mx-auto flex items-center justify-between px-4 py-3">
             <span className="text-lg font-bold tracking-tight text-slate-900">Vaulty</span>
-            {/* WalletButton is a Client Component — safe to render in a Server layout */}
-            <WalletButton />
+            {/* WalletAccountMenu is a Client Component — safe to render in a Server layout */}
+            <WalletAccountMenu />
           </div>
         </header>
 
         <main>{children}</main>
+        <Suspense fallback={null}>
+          <TransactionToast />
+        </Suspense>
+        {/* Screen reader announcer for transaction notifications */}
+        <div
+          id="sr-announcer"
+          className="sr-only"
+          aria-live="polite"
+          aria-atomic="true"
+        />
       </body>
     </html>
   )

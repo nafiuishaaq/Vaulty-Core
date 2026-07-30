@@ -81,7 +81,7 @@ pub struct VaultUnlocked {
 
 impl IntoVal<Env, Val> for VaultUnlocked {
     fn into_val(&self, env: &Env) -> Val {
-        (self.vault_id.clone(), self.unlock_time).into_val(env)
+        (self.vault_id.clone(), self.asset.clone(), self.unlock_time).into_val(env)
     }
 }
 
@@ -311,6 +311,78 @@ impl LoanRepaid {
         (
             BytesN::from_array(env, &[10u8; 32]),
             BytesN::from_array(env, &[12u8; 32]),
+        )
+    }
+}
+
+/// Event emitted when a loan is liquidated
+#[contracttype]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoanLiquidated {
+    pub loan_id: BytesN<32>,
+    pub liquidator: Address,
+    pub collateral_seized: i128,
+    pub remaining_debt: i128,
+}
+
+impl IntoVal<Env, Val> for LoanLiquidated {
+    fn into_val(&self, env: &Env) -> Val {
+        (self.loan_id.clone(), self.liquidator.clone(), self.collateral_seized, self.remaining_debt).into_val(env)
+    }
+}
+
+impl LoanLiquidated {
+    pub fn topic(env: &Env) -> (BytesN<32>, BytesN<32>) {
+        (
+            BytesN::from_array(env, &[10u8; 32]),
+            BytesN::from_array(env, &[13u8; 32]),
+        )
+    }
+}
+
+/// Event emitted when collateral is locked for a loan
+#[contracttype]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CollateralLocked {
+    pub loan_id: BytesN<32>,
+    pub vault_id: BytesN<32>,
+    pub amount: i128,
+}
+
+impl IntoVal<Env, Val> for CollateralLocked {
+    fn into_val(&self, env: &Env) -> Val {
+        (self.loan_id.clone(), self.vault_id.clone(), self.amount).into_val(env)
+    }
+}
+
+impl CollateralLocked {
+    pub fn topic(env: &Env) -> (BytesN<32>, BytesN<32>) {
+        (
+            BytesN::from_array(env, &[10u8; 32]),
+            BytesN::from_array(env, &[14u8; 32]),
+        )
+    }
+}
+
+/// Event emitted when collateral is released after loan repayment
+#[contracttype]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CollateralReleased {
+    pub loan_id: BytesN<32>,
+    pub vault_id: BytesN<32>,
+}
+
+impl IntoVal<Env, Val> for CollateralReleased {
+    fn into_val(&self, env: &Env) -> Val {
+        (self.loan_id.clone(), self.vault_id.clone()).into_val(env)
+    }
+}
+
+impl CollateralReleased {
+    pub fn topic(env: &Env) -> (BytesN<32>, BytesN<32>) {
+        (
+            BytesN::from_array(env, &[10u8; 32]),
+            BytesN::from_array(env, &[15u8; 32]),
         )
     }
 }

@@ -1,5 +1,7 @@
 import { prisma } from '../database';
 import { normalizeEmail, normalizePhoneNumber } from '../utils/identity';
+import { outboxRepository } from './outbox.repository';
+import { OutboxEventType } from '@prisma/client';
 
 export class UserRepository {
   async findById(id: string) {
@@ -281,6 +283,17 @@ export class UserRepository {
         revokedAt: null,
         expiresAt: { gt: new Date() },
       },
+    });
+  }
+
+  // --- Outbox helpers ---
+
+  async createOutboxEvent(eventType: OutboxEventType, aggregateId: string, aggregateType: string, payload: object) {
+    return outboxRepository.create({
+      eventType,
+      aggregateId,
+      aggregateType,
+      payload: JSON.stringify(payload),
     });
   }
 }

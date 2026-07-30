@@ -103,6 +103,29 @@ Manages user savings vaults with advanced features.
 * Admin permission management
 * User vault tracking
 
+### Lock-Period Boundary Rule
+
+Withdrawal eligibility is determined by `TimeHelper::is_past`, which uses a
+`>=` comparison:
+
+```
+now >= unlock_time  →  unlocked (withdrawal allowed)
+now <  unlock_time  →  locked   (withdrawal denied)
+```
+
+This means **a withdrawal attempted at the exact `unlock_time` timestamp
+succeeds**. The vault is treated as unlocked the moment the ledger timestamp
+reaches `unlock_time`; it does **not** require the ledger to advance past it.
+
+A new permissionless `unlock_vault()` operation allows anyone to mark a locked
+vault as `Unlocked` once maturity is reached without requiring a withdrawal.
+This emits the `VaultUnlocked` event and preserves ownership, balances, and
+asset configuration.
+
+This rule applies uniformly to both the `withdraw()` function (which panics
+with "Vault is locked" if `now < unlock_time`) and the `is_locked()` query
+(which returns `false` when `now >= unlock_time`).
+
 ---
 
 ## 🔥 Streak Contract

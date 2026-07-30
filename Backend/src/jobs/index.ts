@@ -4,6 +4,7 @@ import { paymentAuditLogRepository } from '../repositories/payment-audit.reposit
 import { anchorService } from '../services/anchor.service';
 import { transactionService } from '../services/transaction.service';
 import { vaultService } from '../services/vault.service';
+import { runOutboxProcessor, stopOutboxProcessorSafe } from './outbox.processor';
 
 // Example job processors - to be expanded as needed
 
@@ -107,6 +108,7 @@ export const paymentProcessor = async (job: any) => {
 };
 
 let workerRegistry: Record<string, any> | null = null;
+let outboxProcessorRunning = false;
 
 export const confirmationProcessor = async (job: { id?: string; data: { apiTransactionId: string } }) => {
   const { apiTransactionId } = job.data;
@@ -120,7 +122,6 @@ export const vaultReconciliationProcessor = async (job: { id?: string; data: { v
   await vaultService.reconcileVaultTransaction(vaultTransactionId);
 };
 
-// Initialize workers (call this in server.ts after Redis is connected)
 export const initializeWorkers = () => {
   if (workerRegistry) {
     return workerRegistry;
@@ -184,7 +185,17 @@ export const initializeWorkers = () => {
     confirmationWorker,
     vaultReconciliationWorker,
   };
+
   return workerRegistry;
+};
+
+export const initializeOutboxProcessor = async (): Promise<void> => {
+  if (outboxProcessorRunning) {
+    return;
+  }
+  outboxProcessorRunning = true;
+  console.log('Starting outbox processor...');
+  await runOutboxProcessor();
 };
 
 export const getBootstrappedWorkers = () => workerRegistry;

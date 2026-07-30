@@ -3,7 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import { config } from './config';
-import { rateLimiter, errorHandler, notFoundHandler } from './middleware';
+import { rateLimiter, errorHandler, notFoundHandler, requestId } from './middleware';
 import { healthRouter } from './routes/health.routes';
 import { authRouter } from './routes/auth.routes';
 import { anchorRouter } from './routes/anchor.routes';
@@ -32,6 +32,9 @@ export const createApp = (): Application => {
   if (config.nodeEnv !== 'test') {
     app.use(morgan('combined'));
   }
+
+  // Request ID tracing
+  app.use(requestId);
 
   // Rate limiting
   app.use(rateLimiter);

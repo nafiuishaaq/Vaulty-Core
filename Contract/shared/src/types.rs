@@ -7,6 +7,9 @@ use soroban_sdk::{Address, BytesN, contracttype};
 pub enum VaultStatus {
     Active = 0,
     Locked = 1,
+    /// The lock period has completed and the vault has been explicitly
+    /// marked unlocked. This state is distinct from `Active` because it
+    /// indicates maturity has been reached.
     Unlocked = 2,
     Closed = 3,
     Liquidated = 4,
@@ -25,7 +28,13 @@ pub enum PoolStatus {
     RateLimited = 4,
 }
 
-/// Loan status for borrowing contract
+/// Loan status shared by the lending/borrowing contracts.
+///
+/// NOTE: the uploaded repo defined this enum twice (once here with a
+/// `Defaulted` variant used by the older `LoanInfo`-based borrowing draft,
+/// and once later with only `Active`/`Repaid`/`Liquidated` used by the
+/// newer `Loan`-based draft). Kept as one definition, since both drafts
+/// only ever reference `Active`, `Repaid`, and `Liquidated` in practice.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[contracttype]
 #[repr(u32)]
@@ -87,7 +96,7 @@ pub struct CollateralConfig {
     pub safety_factor: i128,         // Basis points
 }
 
-/// Loan information
+/// Loan information (used by the older `LoanInfo`-based borrowing draft)
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[contracttype]
 pub struct LoanInfo {
@@ -188,17 +197,7 @@ pub struct PoolPosition {
     pub last_accrued_at: u64,
 }
 
-/// Loan status for borrowing flows.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[contracttype]
-#[repr(u32)]
-pub enum LoanStatus {
-    Active = 0,
-    Repaid = 1,
-    Liquidated = 2,
-}
-
-/// Collateralized loan state.
+/// Collateralized loan state (used by the newer `Loan`-based borrowing draft).
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[contracttype]
 pub struct Loan {
@@ -343,5 +342,4 @@ pub struct EmergencyStop {
     pub triggered_by: Address,
     pub triggered_at: u64,
     pub reason: BytesN<32>,
-}
 }

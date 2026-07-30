@@ -961,6 +961,93 @@ Redis is used for:
 * Queue management
 * Temporary data
 * Rate limiting
+* Outbox event publishing
+
+---
+
+# Transactional Outbox Pattern
+
+The backend implements a transactional outbox pattern to ensure reliable delivery of financial and notification jobs. This pattern guarantees that database state changes and queue enqueuing are atomic, preventing lost emails, duplicate payments, stale streak calculations, or notifications referring to non-existent records.
+
+## How It Works
+
+1. **Write Phase**: Business services write domain changes and an `OutboxEvent` record inside the same Prisma `$transaction`. This ensures the event is persisted atomically with the domain data.
+2. **Publish Phase**: A dedicated outbox processor (`outbox.processor.ts`) polls for pending events and publishes them to the correct BullMQ queue.
+3. **Idempotency**: Each outbox event is keyed by `aggregateId` + `eventType`, preventing duplicate queue submissions on retries.
+4. **Retry with Backoff**: Failed publish attempts are recorded with exponential backoff (`5s`, `10s`, `20s`, `40s`, `80s`), up to a maximum of 5 attempts.
+5. **Dead Letter**: Events exceeding the retry limit are moved to a `DEAD_LETTER` terminal state for manual inspection and recovery.
+
+## Event Types
+
+| Event Type | Queue | Description |
+|---|---|---|
+| `EMAIL_VERIFICATION` | `email` | Sends a verification email on user registration |
+| `PASSWORD_RESET` | `email` | Sends a password reset email |
+| `EMAIL_RESEND` | `email` | Resends a verification email |
+| `PAYMENT_INITIATED` | `payment-processing` | Triggers payment polling after deposit/withdrawal initiation |
+| `PAYMENT_INSTRUCTIONS` | `payment-processing` | Triggers payment processing after provider instructions are requested |
+| `PAYMENT_STATUS_UPDATE` | `payment-processing` | Triggers status update reconciliation |
+| `VAULT_DEPOSIT` | `vault-reconciliation` | Triggers on-chain deposit reconciliation |
+| `VAULT_WITHDRAWAL` | `vault-reconciliation` | Triggers on-chain withdrawal reconciliation |
+| `VAULT_LOCK` | `vault-reconciliation` | Triggers vault lock reconciliation |
+| `VAULT_UNLOCK` | `vault-reconciliation` | Triggers vault unlock reconciliation |
+| `VAULT_CLOSE` | `vault-reconciliation` | Triggers vault close reconciliation |
+| `NOTIFICATION` | `notifications` | Sends a user notification |
+| `STREAK_UPDATE` | `streak-calculation` | Triggers streak recalculation |
+| `RECONCILIATION` | `stellar-confirmation` | Triggers Stellar transaction reconciliation |
+
+## Retry Behavior
+
+- **Max attempts**: 5
+- **Backoff strategy**: Exponential, starting at 5 seconds and doubling each attempt (capped at 300 seconds)
+- **Retry scheduling**: Failed events have a `nextRetryAt` timestamp; the processor only picks up events whose retry time has arrived
+- **Terminal failure**: After 5 failed attempts, the event is moved to `DEAD_LETTER` status with a `deadLetterReason`
+
+## Operational Recovery
+
+### Processor Startup
+
+The outbox processor starts automatically when the server boots (in both API and worker modes). It runs as a continuous loop that:
+
+1. Queries for pending events with `nextRetryAt <= now` and `attemptCount < 5`
+2. Publishes each event to the appropriate BullMQ queue
+3. Marks the event as `PUBLISHED` on success
+4. Marks the event as `FAILED` with a retry timestamp on transient failure
+5. Marks the event as `DEAD_LETTER` when `attemptCount >= 5`
+
+### Processor Shutdown
+
+On `SIGTERM` or `SIGINT`, the server gracefully shuts down the outbox processor before disconnecting Prisma and Redis. This prevents in-flight publishes from being lost.
+
+### Manual Recovery
+
+To recover stuck events:
+
+```bash
+# Reset failed events that are past their retry time back to PENDING
+# (run via Prisma Studio or a one-off script)
+npx prisma db execute --file prisma/sql/reset_outbox.sql
+```
+
+To inspect dead-letter events:
+
+```sql
+SELECT id, eventType, aggregateId, attemptCount, deadLetterReason, createdAt
+FROM outbox_events
+WHERE status = 'DEAD_LETTER'
+ORDER BY createdAt DESC;
+```
+
+## Monitoring Expectations
+
+- **Outbox lag**: Monitor the count of `PENDING` events with `nextRetryAt <= now`. A growing lag indicates the processor is falling behind.
+- **Dead-letter queue**: Monitor the count of `DEAD_LETTER` events. Any non-zero count requires manual investigation.
+- **Publish failure rate**: Track the ratio of `FAILED` events to total published events. A spike indicates a downstream queue or connectivity issue.
+- **Event age**: Alert on `PENDING` events older than 5 minutes (indicating the processor may be stuck).
+
+## Testing
+
+Unit tests for the outbox repository are in `tests/unit/outbox.repository.test.ts`. Integration tests verifying transactional atomicity and retry behavior are in `tests/integration/outbox.integration.test.ts`.
 
 ---
 

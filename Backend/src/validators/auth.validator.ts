@@ -78,6 +78,12 @@ export const logoutSchema = z.object({
   refreshToken: z.string().min(1, 'Refresh token is required'),
 });
 
+export const updateProfileSchema = z.object({
+  firstName: z.string().min(1, 'First name must be at least 1 character').optional(),
+  lastName: z.string().min(1, 'Last name must be at least 1 character').optional(),
+  phoneNumber: phoneNumberField.optional(),
+});
+
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
 export type RefreshTokenInput = z.infer<typeof refreshTokenSchema>;
@@ -86,3 +92,4 @@ export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
 export type VerifyEmailInput = z.infer<typeof verifyEmailSchema>;
 export type ResendVerificationEmailInput = z.infer<typeof resendVerificationEmailSchema>;
 export type LogoutInput = z.infer<typeof logoutSchema>;
+export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
