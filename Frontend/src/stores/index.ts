@@ -44,6 +44,14 @@ interface AppState extends AuthState {
   fundingOrders: FundingOrder[]
   withdrawalOrders: WithdrawalOrder[]
   regulatedFeatures: FeatureFlags
+  transactionNotifications: TransactionNotification[]
+
+  // Transaction notification actions
+  addTransactionNotification: (notification: Omit<TransactionNotification, 'id' | 'createdAt' | 'updatedAt'>) => string
+  updateTransactionNotification: (id: string, updates: Partial<Omit<TransactionNotification, 'id' | 'createdAt'>>) => void
+  dismissTransactionNotification: (id: string) => void
+  removeTransactionNotification: (id: string) => void
+  findNotificationByIdempotencyKey: (idempotencyKey: string) => TransactionNotification | undefined
 
   setWalletConnected: (publicKey: string, network: 'testnet' | 'mainnet') => void
   setWalletDisconnected: () => void
