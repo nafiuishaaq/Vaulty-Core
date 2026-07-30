@@ -114,8 +114,17 @@ export function useVault() {
     async (vaultId: string, amount: number) => {
       setIsProcessing(true)
       setError(null)
+      const idempotencyKey = generateIdempotencyKey()
+      // Add pending notification
+      const notificationId = addTransactionNotification({
+        type: 'vault',
+        action: 'Deposit to vault',
+        status: 'pending',
+        message: `Processing deposit of $${amount.toFixed(2)} to your vault...`,
+        idempotencyKey,
+      })
+      
       try {
-        const idempotencyKey = generateIdempotencyKey()
         const { transaction } = await apiClient.depositToVault(vaultId, {
           amount,
           idempotencyKey,
@@ -123,26 +132,47 @@ export function useVault() {
 
         // Reload vault data from backend to get the updated balance
         await fetchVaults()
+        
+        // Update to success
+        updateTransactionNotification(notificationId, {
+          status: 'success',
+          message: `Successfully deposited $${amount.toFixed(2)} to your vault!`,
+          reference: transaction.id,
+        })
 
         return transaction
       } catch (err) {
         const message =
           err instanceof ApiError ? err.message : 'Failed to deposit'
         setError(message)
+        // Update to error
+        updateTransactionNotification(notificationId, {
+          status: 'error',
+          message: message,
+        })
         throw err
       } finally {
         setIsProcessing(false)
       }
     },
-    [fetchVaults]
+    [fetchVaults, addTransactionNotification, updateTransactionNotification]
   )
 
   const withdrawFromVault = useCallback(
     async (vaultId: string, amount: number) => {
       setIsProcessing(true)
       setError(null)
+      const idempotencyKey = generateIdempotencyKey()
+      // Add pending notification
+      const notificationId = addTransactionNotification({
+        type: 'vault',
+        action: 'Withdraw from vault',
+        status: 'pending',
+        message: `Processing withdrawal of $${amount.toFixed(2)} from your vault...`,
+        idempotencyKey,
+      })
+      
       try {
-        const idempotencyKey = generateIdempotencyKey()
         const { transaction } = await apiClient.withdrawFromVault(vaultId, {
           amount,
           idempotencyKey,
@@ -150,18 +180,30 @@ export function useVault() {
 
         // Reload vault data from backend
         await fetchVaults()
+        
+        // Update to success
+        updateTransactionNotification(notificationId, {
+          status: 'success',
+          message: `Successfully withdrew $${amount.toFixed(2)} from your vault!`,
+          reference: transaction.id,
+        })
 
         return transaction
       } catch (err) {
         const message =
           err instanceof ApiError ? err.message : 'Failed to withdraw'
         setError(message)
+        // Update to error
+        updateTransactionNotification(notificationId, {
+          status: 'error',
+          message: message,
+        })
         throw err
       } finally {
         setIsProcessing(false)
       }
     },
-    [fetchVaults]
+    [fetchVaults, addTransactionNotification, updateTransactionNotification]
   )
 
   // -------------------------------------------------------------------------
