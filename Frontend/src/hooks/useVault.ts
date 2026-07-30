@@ -214,40 +214,82 @@ export function useVault() {
     async (vaultId: string, lockPeriod: number) => {
       setIsProcessing(true)
       setError(null)
+      const idempotencyKey = generateIdempotencyKey()
+      // Add pending notification
+      const notificationId = addTransactionNotification({
+        type: 'vault',
+        action: 'Lock vault',
+        status: 'pending',
+        message: 'Locking your vault...',
+        idempotencyKey,
+      })
+      
       try {
         const { vault } = await apiClient.lockVault(vaultId, { lockPeriod })
         updateVault(vaultId, vault)
+        // Update to success
+        updateTransactionNotification(notificationId, {
+          status: 'success',
+          message: `Vault locked successfully for ${lockPeriod} days!`,
+          reference: vault.id,
+        })
         return vault
       } catch (err) {
         const message =
           err instanceof ApiError ? err.message : 'Failed to lock vault'
         setError(message)
+        // Update to error
+        updateTransactionNotification(notificationId, {
+          status: 'error',
+          message: message,
+        })
         throw err
       } finally {
         setIsProcessing(false)
       }
     },
-    [updateVault]
+    [updateVault, addTransactionNotification, updateTransactionNotification]
   )
 
   const unlockVault = useCallback(
     async (vaultId: string) => {
       setIsProcessing(true)
       setError(null)
+      const idempotencyKey = generateIdempotencyKey()
+      // Add pending notification
+      const notificationId = addTransactionNotification({
+        type: 'vault',
+        action: 'Unlock vault',
+        status: 'pending',
+        message: 'Unlocking your vault...',
+        idempotencyKey,
+      })
+      
       try {
         const { vault } = await apiClient.unlockVault(vaultId)
         updateVault(vaultId, vault)
+        // Update to success
+        updateTransactionNotification(notificationId, {
+          status: 'success',
+          message: 'Vault unlocked successfully!',
+          reference: vault.id,
+        })
         return vault
       } catch (err) {
         const message =
           err instanceof ApiError ? err.message : 'Failed to unlock vault'
         setError(message)
+        // Update to error
+        updateTransactionNotification(notificationId, {
+          status: 'error',
+          message: message,
+        })
         throw err
       } finally {
         setIsProcessing(false)
       }
     },
-    [updateVault]
+    [updateVault, addTransactionNotification, updateTransactionNotification]
   )
 
   const closeVault = useCallback(
