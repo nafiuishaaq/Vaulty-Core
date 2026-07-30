@@ -4,7 +4,7 @@ import { paymentAuditLogRepository } from '../repositories/payment-audit.reposit
 import { anchorService } from '../services/anchor.service';
 import { transactionService } from '../services/transaction.service';
 import { vaultService } from '../services/vault.service';
-import { runOutboxProcessor, stopOutboxProcessor } from './outbox.processor';
+import { runOutboxProcessor, stopOutboxProcessorSafe } from './outbox.processor';
 
 // Example job processors - to be expanded as needed
 
@@ -196,14 +196,6 @@ export const initializeOutboxProcessor = async (): Promise<void> => {
   outboxProcessorRunning = true;
   console.log('Starting outbox processor...');
   await runOutboxProcessor();
-};
-
-export const stopOutboxProcessorSafe = async (): Promise<void> => {
-  if (!outboxProcessorRunning) {
-    return;
-  }
-  outboxProcessorRunning = false;
-  await stopOutboxProcessor();
 };
 
 export const getBootstrappedWorkers = () => workerRegistry;

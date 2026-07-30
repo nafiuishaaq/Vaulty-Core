@@ -1,7 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { prisma } from '../database';
 import { redis } from '../config/redis';
-import { getBootstrappedWorkers } from '../jobs';
 import { redactError } from '../utils/redact';
 
 const router = Router();
@@ -30,35 +29,45 @@ const checkRedis = (): HealthCheck => {
   return { status: 'degraded', details: `Redis status is ${redis.status}` };
 };
 
-const checkWorkers = (): HealthCheck => {
-  const workers = getBootstrappedWorkers();
-  if (!workers || workers.length === 0) {
-    return { status: 'degraded', details: 'Workers have not been bootstrapped yet' };
-  }
-
-  return { status: 'ok', details: `${workers.length} worker(s) bootstrapped` };
-};
-
-router.get('/', async (_req: Request, res: Response) => {
-  const [prismaCheck, redisCheck, workersCheck] = await Promise.all([
-    checkPrisma(),
-    checkRedis(),
-    Promise.resolve(checkWorkers()),
-  ]);
-
-  const isReady = prismaCheck.status === 'ok' && redisCheck.status === 'ok' && workersCheck.status === 'ok';
-
+router.get('/', (_req: Request, res: Response) => {
   res.json({
     success: true,
     message: 'Vaulty Backend is running',
-    status: isReady ? 'ok' : 'degraded',
-    ready: isReady,
-    timestamp: new Date().toISOString(),
     uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+  });
+});
+
+router.get('/ready', async (_req: Request, res: Response) => {
+  const [prismaCheck, redisCheck] = await Promise.all([
+    checkPrisma(),
+    checkRedis(),
+  ]);
+
+  const isReady = prismaCheck.status === 'ok' && redisCheck.status === 'ok';
+
+  if (isReady) {
+    res.json({
+      success: true,
+      message: 'Vaulty Backend is ready',
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      checks: {
+        prisma: prismaCheck,
+        redis: redisCheck,
+      },
+    });
+    return;
+  }
+
+  res.status(503).json({
+    success: false,
+    message: 'Vaulty Backend is not ready',
+    status: 'degraded',
+    timestamp: new Date().toISOString(),
     checks: {
       prisma: prismaCheck,
       redis: redisCheck,
-      workers: workersCheck,
     },
   });
 });
