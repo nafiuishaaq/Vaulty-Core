@@ -296,21 +296,42 @@ export function useVault() {
     async (vaultId: string) => {
       setIsProcessing(true)
       setError(null)
+      const idempotencyKey = generateIdempotencyKey()
+      // Add pending notification
+      const notificationId = addTransactionNotification({
+        type: 'vault',
+        action: 'Close vault',
+        status: 'pending',
+        message: 'Closing your vault...',
+        idempotencyKey,
+      })
+      
       try {
         const { vault } = await apiClient.closeVault(vaultId)
         // Reload vaults from backend to get the updated list
         await fetchVaults()
+        // Update to success
+        updateTransactionNotification(notificationId, {
+          status: 'success',
+          message: 'Vault closed successfully!',
+          reference: vault.id,
+        })
         return vault
       } catch (err) {
         const message =
           err instanceof ApiError ? err.message : 'Failed to close vault'
         setError(message)
+        // Update to error
+        updateTransactionNotification(notificationId, {
+          status: 'error',
+          message: message,
+        })
         throw err
       } finally {
         setIsProcessing(false)
       }
     },
-    [fetchVaults]
+    [fetchVaults, addTransactionNotification, updateTransactionNotification]
   )
 
   // -------------------------------------------------------------------------
