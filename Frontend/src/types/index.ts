@@ -197,6 +197,24 @@ export type VaultTransactionType = 'DEPOSIT' | 'WITHDRAWAL'
 export type VaultTransactionStatus = 'PENDING' | 'CONFIRMED' | 'FAILED' | 'CANCELLED'
 
 // ---------------------------------------------------------------------------
+// Transaction notification types (toast system)
+// ---------------------------------------------------------------------------
+
+export interface TransactionNotification {
+  id: string
+  type: 'vault' | 'funding' | 'lending' | 'borrowing'
+  action: string
+  status: 'pending' | 'success' | 'error' | 'dismissed'
+  message: string
+  reference?: string
+  idempotencyKey?: string
+  createdAt: string
+  updatedAt: string
+}
+
+export type TransactionStatusType = 'pending' | 'success' | 'error' | 'dismissed'
+
+// ---------------------------------------------------------------------------
 // Legacy / payment flow types (for fiat ramp)
 // ---------------------------------------------------------------------------
 
