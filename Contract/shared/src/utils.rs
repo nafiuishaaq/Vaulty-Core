@@ -97,10 +97,6 @@ impl ValidationHelper {
         lock_period >= 1 && lock_period <= 157_788_000
     }
 
-    pub fn validate_interest_rate(rate_bps: u32) -> bool {
-        rate_bps <= 10_000
-    }
-
     pub fn required_collateral_for_borrow(borrow_amount: i128, collateral_ratio_bps: u32) -> Option<i128> {
         if borrow_amount <= 0 || collateral_ratio_bps == 0 {
             return Some(0);

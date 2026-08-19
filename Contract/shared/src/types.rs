@@ -102,10 +102,11 @@ pub struct CollateralConfig {
 pub struct LoanInfo {
     pub loan_id: BytesN<32>,
     pub borrower: Address,
-    pub collateral_asset: BytesN<32>,
+    pub collateral_vault_id: BytesN<32>,
     pub collateral_amount: i128,
-    pub borrow_asset: BytesN<32>,
     pub borrow_amount: i128,
+    pub outstanding_amount: i128,
+    pub interest_rate_bps: i128,
     pub status: LoanStatus,
     pub created_at: u64,
     pub last_updated: u64,
