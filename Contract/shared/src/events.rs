@@ -1,10 +1,4 @@
-use soroban_sdk::{contracttype, Address, BytesN, Env};
-use soroban_sdk::{Address, BytesN, Env, IntoVal, Val};
-
-/// Event emitted when a new vault is created
-#[contracttype]
-use soroban_sdk::{Address, BytesN, contracttype};
-use soroban_sdk::{Address, BytesN, Env, IntoVal, Val};
+use soroban_sdk::{contracttype, Address, BytesN, Env, IntoVal, Val};
 
 /// Event emitted when a vault is created
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,15 +20,7 @@ pub enum OperationType {
     Unlock = 2,
 }
 
-/// Event emitted when funds are deposited into a vault
-impl IntoVal<Env, Val> for VaultCreated {
-    fn into_val(&self, env: &Env) -> Val {
-        (self.vault_id.clone(), self.owner.clone(), self.asset.clone(), self.lock_period).into_val(env)
-    }
-}
-
 /// Event emitted when a deposit is made to a vault
-#[contracttype]
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[contracttype]
 pub struct DepositMade {
@@ -44,15 +30,7 @@ pub struct DepositMade {
     pub amount: i128,
 }
 
-/// Event emitted when funds are withdrawn from a vault
-impl IntoVal<Env, Val> for DepositMade {
-    fn into_val(&self, env: &Env) -> Val {
-        (self.vault_id.clone(), self.depositor.clone(), self.amount).into_val(env)
-    }
-}
-
 /// Event emitted when a withdrawal is completed
-#[contracttype]
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[contracttype]
 pub struct WithdrawalCompleted {
@@ -62,15 +40,7 @@ pub struct WithdrawalCompleted {
     pub amount: i128,
 }
 
-/// Event emitted when a vault is unlocked after lock period expires
-impl IntoVal<Env, Val> for WithdrawalCompleted {
-    fn into_val(&self, env: &Env) -> Val {
-        (self.vault_id.clone(), self.withdrawer.clone(), self.amount).into_val(env)
-    }
-}
-
 /// Event emitted when a vault is unlocked after lock period
-#[contracttype]
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[contracttype]
 pub struct VaultUnlocked {
@@ -79,14 +49,7 @@ pub struct VaultUnlocked {
     pub unlock_time: u64,
 }
 
-impl IntoVal<Env, Val> for VaultUnlocked {
-    fn into_val(&self, env: &Env) -> Val {
-        (self.vault_id.clone(), self.asset.clone(), self.unlock_time).into_val(env)
-    }
-}
-
 /// Event emitted when a user's streak is updated
-#[contracttype]
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[contracttype]
 pub struct StreakUpdated {
@@ -95,14 +58,7 @@ pub struct StreakUpdated {
     pub last_activity: u64,
 }
 
-impl IntoVal<Env, Val> for StreakUpdated {
-    fn into_val(&self, env: &Env) -> Val {
-        (self.user.clone(), self.streak_count, self.last_activity).into_val(env)
-    }
-}
-
 /// Event emitted when a loan is issued
-#[contracttype]
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[contracttype]
 pub struct LoanIssued {
@@ -112,14 +68,7 @@ pub struct LoanIssued {
     pub collateral: i128,
 }
 
-impl IntoVal<Env, Val> for LoanIssued {
-    fn into_val(&self, env: &Env) -> Val {
-        (self.loan_id.clone(), self.borrower.clone(), self.amount, self.collateral).into_val(env)
-    }
-}
-
 /// Event emitted when a loan is repaid
-#[contracttype]
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[contracttype]
 pub struct LoanRepaid {
@@ -128,14 +77,7 @@ pub struct LoanRepaid {
     pub amount_repaid: i128,
 }
 
-impl IntoVal<Env, Val> for LoanRepaid {
-    fn into_val(&self, env: &Env) -> Val {
-        (self.loan_id.clone(), self.borrower.clone(), self.amount_repaid).into_val(env)
-    }
-}
-
 /// Event emitted when a reward is granted to a user
-#[contracttype]
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[contracttype]
 pub struct RewardGranted {
@@ -143,12 +85,6 @@ pub struct RewardGranted {
     pub reward_amount: i128,
     pub reward_type: u32,
     pub milestone_id: BytesN<32>,
-}
-
-impl IntoVal<Env, Val> for RewardGranted {
-    fn into_val(&self, env: &Env) -> Val {
-        (self.recipient.clone(), self.reward_amount, self.reward_type, self.milestone_id.clone()).into_val(env)
-    }
 }
 
 /// Event emitted when a user claims their reward
@@ -325,12 +261,6 @@ pub struct LoanLiquidated {
     pub remaining_debt: i128,
 }
 
-impl IntoVal<Env, Val> for LoanLiquidated {
-    fn into_val(&self, env: &Env) -> Val {
-        (self.loan_id.clone(), self.liquidator.clone(), self.collateral_seized, self.remaining_debt).into_val(env)
-    }
-}
-
 impl LoanLiquidated {
     pub fn topic(env: &Env) -> (BytesN<32>, BytesN<32>) {
         (
@@ -349,12 +279,6 @@ pub struct CollateralLocked {
     pub amount: i128,
 }
 
-impl IntoVal<Env, Val> for CollateralLocked {
-    fn into_val(&self, env: &Env) -> Val {
-        (self.loan_id.clone(), self.vault_id.clone(), self.amount).into_val(env)
-    }
-}
-
 impl CollateralLocked {
     pub fn topic(env: &Env) -> (BytesN<32>, BytesN<32>) {
         (
@@ -370,12 +294,6 @@ impl CollateralLocked {
 pub struct CollateralReleased {
     pub loan_id: BytesN<32>,
     pub vault_id: BytesN<32>,
-}
-
-impl IntoVal<Env, Val> for CollateralReleased {
-    fn into_val(&self, env: &Env) -> Val {
-        (self.loan_id.clone(), self.vault_id.clone()).into_val(env)
-    }
 }
 
 impl CollateralReleased {

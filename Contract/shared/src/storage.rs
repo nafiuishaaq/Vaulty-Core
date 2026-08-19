@@ -71,14 +71,14 @@ impl StorageHelper {
 
     pub fn has<K>(env: &Env, key: &K) -> bool
     where
-        K: soroban_sdk::IntoVal<Env, soroban_sdk::Val> + ?Sized,
+        K: soroban_sdk::IntoVal<Env, soroban_sdk::Val>,
     {
         env.storage().persistent().has(key)
     }
 
     pub fn has_instance<K>(env: &Env, key: &K) -> bool
     where
-        K: soroban_sdk::IntoVal<Env, soroban_sdk::Val> + ?Sized,
+        K: soroban_sdk::IntoVal<Env, soroban_sdk::Val>,
     {
         env.storage().instance().has(key)
     }
@@ -94,7 +94,7 @@ impl StorageHelper {
         extend_to: u32,
     )
     where
-        K: soroban_sdk::IntoVal<Env, soroban_sdk::Val> + ?Sized,
+        K: soroban_sdk::IntoVal<Env, soroban_sdk::Val>,
     {
         env.storage()
             .persistent()
@@ -107,7 +107,7 @@ impl StorageHelper {
         threshold: u32,
     ) -> Result<(), Error>
     where
-        K: soroban_sdk::IntoVal<Env, soroban_sdk::Val> + ?Sized,
+        K: soroban_sdk::IntoVal<Env, soroban_sdk::Val>,
     {
         if !env.storage().persistent().has(key) {
             return Err(Error::NotInitialized);
@@ -138,49 +138,49 @@ impl StorageHelper {
 
     pub fn touch<K>(env: &Env, key: &K, ttl: u32)
     where
-        K: soroban_sdk::IntoVal<Env, soroban_sdk::Val> + ?Sized,
+        K: soroban_sdk::IntoVal<Env, soroban_sdk::Val>,
     {
         Self::extend_persistent(env, key, StorageTTL::BUFFER, ttl);
     }
 
     pub fn touch_vault<K>(env: &Env, key: &K)
     where
-        K: soroban_sdk::IntoVal<Env, soroban_sdk::Val> + ?Sized,
+        K: soroban_sdk::IntoVal<Env, soroban_sdk::Val>,
     {
         Self::touch(env, key, StorageTTL::VAULT);
     }
 
     pub fn touch_user<K>(env: &Env, key: &K)
     where
-        K: soroban_sdk::IntoVal<Env, soroban_sdk::Val> + ?Sized,
+        K: soroban_sdk::IntoVal<Env, soroban_sdk::Val>,
     {
         Self::touch(env, key, StorageTTL::USER);
     }
 
     pub fn touch_reward<K>(env: &Env, key: &K)
     where
-        K: soroban_sdk::IntoVal<Env, soroban_sdk::Val> + ?Sized,
+        K: soroban_sdk::IntoVal<Env, soroban_sdk::Val>,
     {
         Self::touch(env, key, StorageTTL::REWARD);
     }
 
     pub fn touch_lending<K>(env: &Env, key: &K)
     where
-        K: soroban_sdk::IntoVal<Env, soroban_sdk::Val> + ?Sized,
+        K: soroban_sdk::IntoVal<Env, soroban_sdk::Val>,
     {
         Self::touch(env, key, StorageTTL::LENDING);
     }
 
     pub fn touch_borrowing<K>(env: &Env, key: &K)
     where
-        K: soroban_sdk::IntoVal<Env, soroban_sdk::Val> + ?Sized,
+        K: soroban_sdk::IntoVal<Env, soroban_sdk::Val>,
     {
         Self::touch(env, key, StorageTTL::BORROWING);
     }
 
     pub fn touch_streak<K>(env: &Env, key: &K)
     where
-        K: soroban_sdk::IntoVal<Env, soroban_sdk::Val> + ?Sized,
+        K: soroban_sdk::IntoVal<Env, soroban_sdk::Val>,
     {
         Self::touch(env, key, StorageTTL::STREAK);
     }

@@ -1,6 +1,6 @@
 #![no_std]
 use soroban_sdk::{
-    contract, contractimpl, contracttype, Address, BytesN, Env, IntoVal, Map, Symbol, Vec,
+    contract, contractimpl, contracttype, Address, BytesN, Env, token, IntoVal, Map, Vec, Symbol,
 };
 use shared::{
     errors::Error,
@@ -8,7 +8,6 @@ use shared::{
     storage::{StorageHelper, StorageTTL},
     types::{Asset, VaultMetadata, VaultStatus, EmergencyStop, RateLimit, Role, Permission},
     utils::{FixedMath, SafeMath, TimeHelper, ValidationHelper},
-    token,
 };
 
 /// Vault contract for managing savings vaults with time-locked deposits
@@ -25,6 +24,7 @@ pub enum VaultKey {
     VaultConfig,
     EmergencyStop,
     RateLimit,
+    Admin,
     AdminPermissions(Address),
     UserVaults(Address),
     VaultInterest(VaultId),
@@ -61,7 +61,7 @@ fn rewards_contract_key(env: &Env) -> BytesN<32> {
 }
 
 #[contracttype]
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct VaultId(BytesN<32>);
 
 #[contractimpl]
@@ -310,11 +310,6 @@ impl VaultContract {
         StorageHelper::touch_vault(&env, &balances_key);
 
         env.events().publish(
-            (vault_id.0.clone(), from, amount),
-            (DepositMade {
-                vault_id: vault_id.0.clone(),
-                depositor: from,
-                asset: metadata.asset.symbol,
             (DepositMade::topic(&env), vault_id.0.clone()),
             DepositMade {
                 vault_id: vault_id.0,
@@ -602,6 +597,36 @@ impl VaultContract {
         }
     }
 
+    fn check_emergency_stop(env: &Env) -> Result<(), Error> {
+        let stop_key = VaultKey::EmergencyStop;
+        if let Some(stop) = env.storage().persistent().get::<_, EmergencyStop>(&stop_key) {
+            if stop.active {
+                return Err(Error::EmergencyStopActive);
+            }
+        }
+        Ok(())
+    }
+
+    fn is_admin(env: &Env, address: &Address) -> bool {
+        let admin_key = VaultKey::Admin;
+        if let Some(admin) = env.storage().persistent().get::<_, Address>(&admin_key) {
+            admin == *address
+        } else {
+            false
+        }
+    }
+
+    fn check_rate_limit(env: &Env) -> Result<(), Error> {
+        let rate_limit_key = VaultKey::RateLimit;
+        if let Some(rate_limit) = env.storage().persistent().get::<_, RateLimit>(&rate_limit_key) {
+            let now = TimeHelper::now(env);
+            if now < rate_limit.period_start {
+                return Err(Error::RateLimitExceeded);
+            }
+        }
+        Ok(())
+    }
+
     /// Set vault configuration
     pub fn set_config(env: Env, admin: Address, config: VaultConfig) -> Result<(), Error> {
         if !Self::is_admin(&env, &admin) {
@@ -711,15 +736,21 @@ impl VaultContract {
         // Remove from old owner's vault list
         let old_owner = metadata.owner.clone();
         let old_user_vaults_key = VaultKey::UserVaults(old_owner.clone());
-        if let Some(mut old_user_vaults): Option<Vec<VaultId>> = env.storage().persistent().get(&old_user_vaults_key) {
-            old_user_vaults = old_user_vaults.into_iter().filter(|v| v != &vault_id).collect();
-            env.storage().persistent().set(&old_user_vaults_key, &old_user_vaults);
+        if let Some(mut old_user_vaults) = env.storage().persistent().get::<_, Vec<VaultId>>(&old_user_vaults_key) {
+            let mut new_user_vaults = Vec::new(&env);
+            for i in 0..old_user_vaults.len() {
+                let v = old_user_vaults.get(i).unwrap();
+                if v != vault_id {
+                    new_user_vaults.push_back(v);
+                }
+            }
+            env.storage().persistent().set(&old_user_vaults_key, &new_user_vaults);
         }
 
         // Update owner
         metadata.owner = new_owner.clone();
         metadata.status = shared::types::VaultStatus::Active;
-        vaults_map.set(vault_id, metadata);
+        vaults_map.set(vault_id.clone(), metadata);
         env.storage().persistent().set(&vaults_key, &vaults_map);
 
         // Add to new owner's vault list
