@@ -1,7 +1,7 @@
 #![cfg(test)]
 extern crate std;
 
-use shared::types::UserStreak;
+use shared::{storage::StorageTTL, types::UserStreak};
 use soroban_sdk::{
     testutils::{Address as _, Ledger, LedgerInfo},
     Address, BytesN, Env, Map, Vec,
@@ -15,6 +15,7 @@ fn setup() -> (Env, Address, Address) {
     env.mock_all_auths();
     env.ledger().set(LedgerInfo {
         min_persistent_entry_ttl: SHORT_TTL,
+        max_entry_ttl: StorageTTL::STREAK,
         ..env.ledger().get()
     });
 
