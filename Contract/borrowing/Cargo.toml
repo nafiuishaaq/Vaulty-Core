@@ -3,6 +3,9 @@ name = "borrowing"
 version.workspace = true
 edition.workspace = true
 
+[features]
+testutils = ["soroban-sdk/testutils"]
+
 [dependencies]
 soroban-sdk.workspace = true
 shared.workspace = true
