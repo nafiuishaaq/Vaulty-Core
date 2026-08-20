@@ -654,6 +654,22 @@ impl VaultContract {
         Ok(config)
     }
 
+    fn store_vault_metadata(
+        env: &Env,
+        vaults_key: &BytesN<32>,
+        vaults_map: &mut Map<VaultId, VaultMetadata>,
+        vault_id: &VaultId,
+        metadata: &VaultMetadata,
+    ) {
+        vaults_map.set(vault_id.clone(), metadata.clone());
+        env.storage().persistent().set(vaults_key, vaults_map);
+        env.storage()
+            .persistent()
+            .set(&VaultKey::Vault(vault_id.clone()), metadata);
+        StorageHelper::touch_vault(env, vaults_key);
+        StorageHelper::touch_vault(env, &VaultKey::Vault(vault_id.clone()));
+    }
+
     /// Lock a vault to prevent withdrawals (used by borrowing contract)
     pub fn lock_vault(env: Env, vault_id: VaultId) -> Result<(), Error> {
         let vaults_key = vaults_key(&env);
@@ -664,9 +680,14 @@ impl VaultContract {
             return Err(Error::InvalidParameters);
         }
 
-        metadata.status = shared::types::VaultStatus::Locked;
-        vaults_map.set(vault_id, metadata);
-        env.storage().persistent().set(&vaults_key, &vaults_map);
+        metadata.status = VaultStatus::Locked;
+        Self::store_vault_metadata(
+            &env,
+            &vaults_key,
+            &mut vaults_map,
+            &vault_id,
+            &metadata,
+        );
 
         Ok(())
     }
@@ -692,11 +713,13 @@ impl VaultContract {
         }
 
         metadata.status = VaultStatus::Unlocked;
-        vaults_map.set(vault_id.clone(), metadata.clone());
-        env.storage().persistent().set(&vaults_key, &vaults_map);
-        env.storage().persistent().set(&VaultKey::Vault(vault_id.clone()), &metadata);
-        StorageHelper::touch_vault(&env, &vaults_key);
-        StorageHelper::touch_vault(&env, &VaultKey::Vault(vault_id.clone()));
+        Self::store_vault_metadata(
+            &env,
+            &vaults_key,
+            &mut vaults_map,
+            &vault_id,
+            &metadata,
+        );
 
         env.events().publish(
             (VaultUnlocked::topic(&env), vault_id.0.clone()),
@@ -720,9 +743,14 @@ impl VaultContract {
             return Err(Error::InvalidParameters);
         }
 
-        metadata.status = shared::types::VaultStatus::Active;
-        vaults_map.set(vault_id, metadata);
-        env.storage().persistent().set(&vaults_key, &vaults_map);
+        metadata.status = VaultStatus::Active;
+        Self::store_vault_metadata(
+            &env,
+            &vaults_key,
+            &mut vaults_map,
+            &vault_id,
+            &metadata,
+        );
 
         Ok(())
     }
@@ -749,9 +777,14 @@ impl VaultContract {
 
         // Update owner
         metadata.owner = new_owner.clone();
-        metadata.status = shared::types::VaultStatus::Active;
-        vaults_map.set(vault_id.clone(), metadata);
-        env.storage().persistent().set(&vaults_key, &vaults_map);
+        metadata.status = VaultStatus::Active;
+        Self::store_vault_metadata(
+            &env,
+            &vaults_key,
+            &mut vaults_map,
+            &vault_id,
+            &metadata,
+        );
 
         // Add to new owner's vault list
         let new_user_vaults_key = VaultKey::UserVaults(new_owner);

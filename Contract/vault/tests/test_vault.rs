@@ -111,6 +111,65 @@ fn setup() -> (Env, Address, Address, BytesN<32>, Address) {
     (env, contract_id, vault, symbol, token)
 }
 
+fn first_vault_id_bytes(env: &Env) -> BytesN<32> {
+    let mut bytes = [0u8; 32];
+    bytes[..8].copy_from_slice(&1u64.to_be_bytes());
+    BytesN::from_array(env, &bytes)
+}
+
+#[test]
+fn test_lock_vault_updates_direct_vault_record() {
+    let (env, contract_id, owner, symbol, token) = setup();
+    let client = VaultContractClient::new(&env, &contract_id);
+    let vault_id = client.create_vault(&owner, &token, &symbol, &86400u64);
+    let vault_id_bytes = first_vault_id_bytes(&env);
+
+    client.unlock_collateral_vault(&vault_id);
+    assert_eq!(
+        client.get_vault(&vault_id),
+        client.get_vault_by_bytes(&vault_id_bytes)
+    );
+
+    client.lock_vault(&vault_id);
+    assert_eq!(
+        client.get_vault(&vault_id),
+        client.get_vault_by_bytes(&vault_id_bytes)
+    );
+}
+
+#[test]
+fn test_unlock_collateral_vault_updates_direct_vault_record() {
+    let (env, contract_id, owner, symbol, token) = setup();
+    let client = VaultContractClient::new(&env, &contract_id);
+    let vault_id = client.create_vault(&owner, &token, &symbol, &86400u64);
+    let vault_id_bytes = first_vault_id_bytes(&env);
+
+    client.unlock_collateral_vault(&vault_id);
+
+    assert_eq!(
+        client.get_vault(&vault_id),
+        client.get_vault_by_bytes(&vault_id_bytes)
+    );
+}
+
+#[test]
+fn test_transfer_vault_ownership_updates_direct_vault_record() {
+    let (env, contract_id, owner, symbol, token) = setup();
+    let client = VaultContractClient::new(&env, &contract_id);
+    let vault_id = client.create_vault(&owner, &token, &symbol, &86400u64);
+    let vault_id_bytes = first_vault_id_bytes(&env);
+    let new_owner = Address::generate(&env);
+
+    client.transfer_vault_ownership(&vault_id, &new_owner);
+
+    let direct_metadata = client.get_vault(&vault_id);
+    assert_eq!(direct_metadata.owner, new_owner);
+    assert_eq!(
+        direct_metadata,
+        client.get_vault_by_bytes(&vault_id_bytes)
+    );
+}
+
 #[test]
 fn test_create_vault() {
     let (env, contract_id, owner, symbol, token) = setup();
