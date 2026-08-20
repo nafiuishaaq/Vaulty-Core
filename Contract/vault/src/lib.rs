@@ -373,8 +373,8 @@ impl VaultContract {
             .storage()
             .persistent()
             .get(&vaults_key)
-            .expect("Vault not found");
-        let mut metadata = vaults_map.get(vault_id.clone()).expect("Vault not found");
+            .ok_or(Error::VaultNotFound)?;
+        let mut metadata = vaults_map.get(vault_id.clone()).ok_or(Error::VaultNotFound)?;
         StorageHelper::touch_vault(&env, &vaults_key);
         StorageHelper::touch_vault(&env, &VaultKey::Vault(vault_id.clone()));
 
@@ -418,8 +418,8 @@ impl VaultContract {
             .storage()
             .persistent()
             .get(&balances_key)
-            .expect("Balance not found");
-        let current_balance = balances_map.get(vault_id.clone()).expect("Balance not found");
+            .ok_or(Error::VaultNotFound)?;
+        let current_balance = balances_map.get(vault_id.clone()).ok_or(Error::VaultNotFound)?;
         if amount > current_balance {
             return Err(Error::InsufficientBalance);
         }
@@ -586,15 +586,19 @@ impl VaultContract {
     ///
     /// # Returns
     /// True if the vault is locked, false otherwise
-    pub fn is_locked(env: Env, vault_id: VaultId) -> bool {
+    pub fn is_locked(env: Env, vault_id: VaultId) -> Result<bool, Error> {
         let vaults_key = vaults_key(&env);
-        let vaults_map: Map<VaultId, VaultMetadata> = env.storage().persistent().get(&vaults_key).expect("Vault not found");
-        let metadata = vaults_map.get(vault_id).expect("Vault not found");
-        if metadata.status == VaultStatus::Locked {
+        let vaults_map: Map<VaultId, VaultMetadata> = env
+            .storage()
+            .persistent()
+            .get(&vaults_key)
+            .ok_or(Error::VaultNotFound)?;
+        let metadata = vaults_map.get(vault_id).ok_or(Error::VaultNotFound)?;
+        Ok(if metadata.status == VaultStatus::Locked {
             !TimeHelper::is_past(&env, metadata.unlock_time)
         } else {
             false
-        }
+        })
     }
 
     fn check_emergency_stop(env: &Env) -> Result<(), Error> {
@@ -657,8 +661,12 @@ impl VaultContract {
     /// Lock a vault to prevent withdrawals (used by borrowing contract)
     pub fn lock_vault(env: Env, vault_id: VaultId) -> Result<(), Error> {
         let vaults_key = vaults_key(&env);
-        let mut vaults_map: Map<VaultId, VaultMetadata> = env.storage().persistent().get(&vaults_key).expect("Vault not found");
-        let mut metadata = vaults_map.get(vault_id.clone()).expect("Vault not found");
+        let mut vaults_map: Map<VaultId, VaultMetadata> = env
+            .storage()
+            .persistent()
+            .get(&vaults_key)
+            .ok_or(Error::VaultNotFound)?;
+        let mut metadata = vaults_map.get(vault_id.clone()).ok_or(Error::VaultNotFound)?;
 
         if metadata.status != shared::types::VaultStatus::Active {
             return Err(Error::InvalidParameters);
@@ -678,8 +686,12 @@ impl VaultContract {
     /// emits a `VaultUnlocked` event.
     pub fn unlock_vault(env: Env, vault_id: VaultId) -> Result<(), Error> {
         let vaults_key = vaults_key(&env);
-        let mut vaults_map: Map<VaultId, VaultMetadata> = env.storage().persistent().get(&vaults_key).expect("Vault not found");
-        let mut metadata = vaults_map.get(vault_id.clone()).expect("Vault not found");
+        let mut vaults_map: Map<VaultId, VaultMetadata> = env
+            .storage()
+            .persistent()
+            .get(&vaults_key)
+            .ok_or(Error::VaultNotFound)?;
+        let mut metadata = vaults_map.get(vault_id.clone()).ok_or(Error::VaultNotFound)?;
 
         if metadata.status != VaultStatus::Locked {
             if metadata.status == VaultStatus::Unlocked {
@@ -713,8 +725,12 @@ impl VaultContract {
     /// Unlock a vault after loan repayment
     pub fn unlock_collateral_vault(env: Env, vault_id: VaultId) -> Result<(), Error> {
         let vaults_key = vaults_key(&env);
-        let mut vaults_map: Map<VaultId, VaultMetadata> = env.storage().persistent().get(&vaults_key).expect("Vault not found");
-        let mut metadata = vaults_map.get(vault_id.clone()).expect("Vault not found");
+        let mut vaults_map: Map<VaultId, VaultMetadata> = env
+            .storage()
+            .persistent()
+            .get(&vaults_key)
+            .ok_or(Error::VaultNotFound)?;
+        let mut metadata = vaults_map.get(vault_id.clone()).ok_or(Error::VaultNotFound)?;
 
         if metadata.status != shared::types::VaultStatus::Locked {
             return Err(Error::InvalidParameters);
@@ -730,8 +746,12 @@ impl VaultContract {
     /// Transfer vault ownership (used during liquidation)
     pub fn transfer_vault_ownership(env: Env, vault_id: VaultId, new_owner: Address) -> Result<(), Error> {
         let vaults_key = vaults_key(&env);
-        let mut vaults_map: Map<VaultId, VaultMetadata> = env.storage().persistent().get(&vaults_key).expect("Vault not found");
-        let mut metadata = vaults_map.get(vault_id.clone()).expect("Vault not found");
+        let mut vaults_map: Map<VaultId, VaultMetadata> = env
+            .storage()
+            .persistent()
+            .get(&vaults_key)
+            .ok_or(Error::VaultNotFound)?;
+        let mut metadata = vaults_map.get(vault_id.clone()).ok_or(Error::VaultNotFound)?;
 
         // Remove from old owner's vault list
         let old_owner = metadata.owner.clone();
@@ -764,16 +784,20 @@ impl VaultContract {
     }
 
     /// Get vault metadata (for cross-contract calls)
-    pub fn get_vault_by_bytes(env: Env, vault_id: BytesN<32>) -> VaultMetadata {
+    pub fn get_vault_by_bytes(env: Env, vault_id: BytesN<32>) -> Result<VaultMetadata, Error> {
         let typed_vault_id = VaultId(vault_id.clone());
         let vaults_key = vaults_key(&env);
-        let vaults_map: Map<VaultId, VaultMetadata> = env.storage().persistent().get(&vaults_key).expect("Vault not found");
-        let metadata = vaults_map.get(typed_vault_id.clone()).expect("Vault not found");
+        let vaults_map: Map<VaultId, VaultMetadata> = env
+            .storage()
+            .persistent()
+            .get(&vaults_key)
+            .ok_or(Error::VaultNotFound)?;
+        let metadata = vaults_map.get(typed_vault_id.clone()).ok_or(Error::VaultNotFound)?;
 
         StorageHelper::touch_vault(&env, &vaults_key);
         StorageHelper::touch_vault(&env, &VaultKey::Vault(typed_vault_id));
 
-        metadata
+        Ok(metadata)
     }
 
     /// Helper function to generate a vault ID from a counter
