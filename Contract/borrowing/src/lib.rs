@@ -1,4 +1,5 @@
 #![no_std]
+use soroban_sdk::{contract, contractimpl, contracttype, Address, BytesN, Env, Vec, Map, Symbol, IntoVal, Val};
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Bytes, BytesN, Env, Vec, Map, Symbol, IntoVal};
 use shared::errors::Error;
 use shared::events::{LoanIssued, LoanRepaid, LoanLiquidated, CollateralLocked, CollateralReleased};
@@ -25,9 +26,6 @@ const COLLATERAL_RATIO_BPS: u32 = 15000;
 /// Borrowing contract for managing collateralized loans.
 #[contract]
 pub struct BorrowingContract;
-
-#[cfg(test)]
-pub use BorrowingContract;
 
 #[contractimpl]
 impl BorrowingContract {
@@ -427,6 +425,16 @@ impl BorrowingContract {
     }
 
     /// Add additional collateral to a loan
+    ///
+    /// Transfers the additional collateral from the borrower into the
+    /// collateralized vault (the approved custody path) **before** updating
+    /// the loan's collateral accounting. The vault's `deposit` moves the
+    /// tokens from the borrower into the vault; if that transfer fails, the
+    /// whole invocation reverts and the loan state is left unchanged, keeping
+    /// token movement and loan-state updates atomic.
+    ///
+    /// # Auth
+    /// Requires authorization from the loan's borrower.
     pub fn add_collateral(
         env: Env,
         loan_id: BytesN<32>,
@@ -446,8 +454,32 @@ impl BorrowingContract {
             return Err(Error::InvalidParameters);
         }
 
+        // Require borrower authorization before moving any collateral
         loan_info.borrower.require_auth();
 
+        // Move the additional collateral through the approved vault custody
+        // path: the vault contract transfers the tokens from the borrower
+        // into the vault and credits the vault's balance. `vault_id` is
+        // encoded as the vault's `VaultId` (a single-element vec wrapping the
+        // raw bytes) so the call decodes against the vault contract's ABI.
+        let vault_contract: Address = env.storage().persistent()
+            .get(&BorrowingKey::VaultContractAddress)
+            .ok_or(Error::NotInitialized)?;
+
+        let mut deposit_args = Vec::new(&env);
+        let mut vault_id_arg: Vec<Val> = Vec::new(&env);
+        vault_id_arg.push_back(loan_info.collateral_vault_id.clone().into_val(&env));
+        deposit_args.push_back(vault_id_arg.to_val());
+        deposit_args.push_back(loan_info.borrower.clone().into_val(&env));
+        deposit_args.push_back(additional_amount.into_val(&env));
+        env.invoke_contract::<()>(
+            &vault_contract,
+            &Symbol::new(&env, "deposit"),
+            deposit_args,
+        );
+
+        // Only update loan accounting after the collateral has actually been
+        // locked into the vault
         loan_info.collateral_amount = SafeMath::add(loan_info.collateral_amount, additional_amount)
             .ok_or(Error::Overflow)?;
         loan_info.last_updated = TimeHelper::now(&env);
