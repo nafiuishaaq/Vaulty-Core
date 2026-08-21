@@ -11,6 +11,11 @@ Cargo.lock
 .wasm
 test_snapshots/
 
+# Test snapshots
+**/.soroban/
+**/test_snapshots/
+**/*.snap
+
 # IDE
 .vscode/
 .idea/
