@@ -507,7 +507,7 @@ fn test_is_locked() {
         &86400u64,
     );
 
-    assert!(VaultContract::is_locked(&env, &contract_id, &vault_id));
+    assert!(VaultContract::is_locked(&env, &contract_id, &vault_id).unwrap());
     let contract_id = env.register_contract_wasm(None, vault::WASM);
     let client = VaultContractClient::new(&env, &contract_id);
 
@@ -531,7 +531,7 @@ fn test_is_locked() {
         max_entry_ttl: 31104000,
     });
 
-    assert!(!VaultContract::is_locked(&env, &contract_id, &vault_id));
+    assert!(!VaultContract::is_locked(&env, &contract_id, &vault_id).unwrap());
     // Should be unlocked after lock period
     assert!(!client.is_locked(&vault_id));
 }
@@ -581,7 +581,7 @@ fn test_unlock_vault_at_exact_unlock_time() {
     VaultContract::unlock_vault(&env, &contract_id, &vault_id).unwrap();
     let vault = VaultContract::get_vault(&env, &contract_id, &vault_id).unwrap();
     assert_eq!(vault.status, 2);
-    assert!(!VaultContract::is_locked(&env, &contract_id, &vault_id));
+    assert!(!VaultContract::is_locked(&env, &contract_id, &vault_id).unwrap());
 }
 
 #[test]
@@ -612,7 +612,7 @@ fn test_unlock_vault_after_unlock_time() {
     VaultContract::unlock_vault(&env, &contract_id, &vault_id).unwrap();
     let vault = VaultContract::get_vault(&env, &contract_id, &vault_id).unwrap();
     assert_eq!(vault.status, 2);
-    assert!(!VaultContract::is_locked(&env, &contract_id, &vault_id));
+    assert!(!VaultContract::is_locked(&env, &contract_id, &vault_id).unwrap());
 }
 
 #[test]
@@ -646,12 +646,12 @@ fn test_unlock_vault_only_once() {
 }
 
 #[test]
-#[should_panic(expected = "Vault not found")]
 fn test_get_nonexistent_vault() {
     let (env, contract_id, _owner, _symbol, _token) = setup();
 
-    let fake_vault_id = VaultId(BytesN::from_array(&[1u8; 32]));
-    VaultContract::get_vault(&env, &contract_id, &fake_vault_id);
+    let fake_vault_id = VaultId(BytesN::from_array(&env, &[1u8; 32]));
+    let result = VaultContract::get_vault(&env, &contract_id, &fake_vault_id);
+    assert_eq!(result, Err(shared::errors::Error::VaultNotFound));
 }
 
 #[test]
@@ -823,7 +823,7 @@ fn test_withdraw_at_exact_unlock_time() {
 
     // is_locked must return false at exactly unlock_time.
     assert!(
-        !VaultContract::is_locked(&env, &contract_id, &vault_id),
+        !VaultContract::is_locked(&env, &contract_id, &vault_id).unwrap(),
         "Vault should be unlocked at exactly unlock_time"
     );
 
