@@ -81,6 +81,15 @@ fn test_multiple_milestones() {
     let pending = client.get_pending_rewards(&user);
     // 10 (7-day) + 50 (30-day) = 60
     assert_eq!(pending, 60_0000000);
+
+    // Liquidity should be deducted for each granted milestone (1000 - 60 = 940)
+    let pool = client.get_pool_state();
+    assert_eq!(pool.available_liquidity, 940_0000000);
+
+    // Calling again must not double-grant (duplicate-grant protection)
+    client.grant_reward(&user, &30);
+    assert_eq!(client.get_pending_rewards(&user), 60_0000000);
+    assert_eq!(client.get_pool_state().available_liquidity, 940_0000000);
 }
 
 #[test]

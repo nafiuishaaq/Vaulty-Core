@@ -201,7 +201,7 @@ impl RewardsContract {
     /// Grant a reward to a user for reaching a milestone
     /// Called automatically by streaks contract when milestone is hit
     pub fn grant_reward(env: Env, recipient: Address, streak_count: u32) {
-        let pool = Self::get_rewards_pool(&env);
+        let mut pool = Self::get_rewards_pool(&env);
         if !pool.initialized {
             panic!("{:?}", Error::RewardsPoolNotInitialized);
         }
@@ -209,7 +209,8 @@ impl RewardsContract {
         // Get all milestones
         let milestones = Self::get_milestones(&env);
 
-        // Find matching milestone that hasn't been granted yet
+        // Grant every eligible milestone the user hasn't received yet
+        let mut granted = false;
         for milestone in milestones.iter() {
             if streak_count >= milestone.streak_threshold {
                 // Generate milestone ID from threshold
@@ -237,9 +238,8 @@ impl RewardsContract {
                 Self::store_user_reward(&env, &recipient, user_reward);
 
                 // Deduct from pool liquidity
-                let mut pool_mut = pool.clone();
-                pool_mut.available_liquidity -= milestone.reward_amount;
-                Self::set_rewards_pool(&env, pool_mut);
+                pool.available_liquidity -= milestone.reward_amount;
+                granted = true;
 
                 // Emit events
                 env.events().publish(
@@ -260,10 +260,11 @@ impl RewardsContract {
                         milestone_id,
                     },
                 );
-
-                // Only grant one milestone per call to prevent multiple grants
-                break;
             }
+        }
+
+        if granted {
+            Self::set_rewards_pool(&env, pool);
         }
     }
 
