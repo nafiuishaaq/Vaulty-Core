@@ -1,13 +1,12 @@
 #![no_std]
-use soroban_sdk::{
-    contract, contractimpl, contracttype, Address, BytesN, Env, Map, Vec,
-};
 use shared::{
+    errors::Error,
     events::{StreakFreezeUsed, StreakUpdated},
+    storage::StorageHelper,
     types::UserStreak,
     utils::StreakTimeHelper,
-    errors::Error,
 };
+use soroban_sdk::{contract, contractimpl, contracttype, Address, BytesN, Env, Map, Vec};
 
 /// Storage keys for streaks contract
 #[derive(Clone)]
@@ -48,7 +47,7 @@ pub struct StreaksContract;
 const VAULT_CONTRACT_KEY: &[u8; 32] = b"vault_contract_address______\0\0\0\0";
 const AUTHORIZED_CALLERS_KEY: &[u8; 32] = b"authorized_callers__________\0\0\0\0";
 const INITIALIZE_FREEZES: u32 = 3; // Start with 3 freezes for all users
-// const DAILY_RESET_HOUR: u64 = 0; // UTC midnight reset
+                                   // const DAILY_RESET_HOUR: u64 = 0; // UTC midnight reset
 
 #[contractimpl]
 impl StreaksContract {
@@ -77,7 +76,8 @@ impl StreaksContract {
         Self::verify_authorization(&env);
 
         let auth_key = BytesN::from_array(&env, AUTHORIZED_CALLERS_KEY);
-        let mut authorized: soroban_sdk::Vec<Address> = env.storage().instance().get(&auth_key).unwrap();
+        let mut authorized: soroban_sdk::Vec<Address> =
+            env.storage().instance().get(&auth_key).unwrap();
 
         // Check if already in list
         if authorized.contains(&caller) {
@@ -110,6 +110,7 @@ impl StreaksContract {
 
         // Store the streak
         Self::store_streak(&env, &user, streak);
+        Self::store_activity_history(&env, &user, Vec::new(&env));
 
         // Emit event
         env.events().publish(
@@ -193,6 +194,7 @@ impl StreaksContract {
 
         // Save updated streak
         Self::store_streak(&env, &user, streak.clone());
+        Self::record_activity(&env, &user, current_period);
 
         // Emit streak updated event
         env.events().publish(
@@ -240,7 +242,10 @@ impl StreaksContract {
         }
 
         let mut streak = Self::get_streak_internal(&env, &user);
-        streak.available_freezes = streak.available_freezes.checked_add(amount).unwrap_or(streak.available_freezes);
+        streak.available_freezes = streak
+            .available_freezes
+            .checked_add(amount)
+            .unwrap_or(streak.available_freezes);
         Self::store_streak(&env, &user, streak);
     }
 
@@ -273,6 +278,22 @@ impl StreaksContract {
         (current_period - streak.last_activity_period) <= 86400 * 2
     }
 
+    /// Get the periods in which a user recorded streak activity.
+    pub fn get_activity_history(env: Env, user: Address) -> Vec<u64> {
+        let key = StreakKey::ActivityHistory(user);
+        let history = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        if env.storage().persistent().has(&key) {
+            StorageHelper::touch_streak(&env, &key);
+        }
+
+        history
+    }
+
     /// Internal helper to verify caller is authorized
     fn verify_authorization(env: &Env) {
         let auth_key = BytesN::from_array(env, AUTHORIZED_CALLERS_KEY);
@@ -293,23 +314,59 @@ impl StreaksContract {
     /// Check if a user has a streak stored
     fn streak_exists(env: &Env, user: &Address) -> bool {
         let key = Self::streaks_storage_key(env);
-        let streaks: Map<Address, UserStreak> = env.storage().persistent().get(&key).unwrap_or_else(|| Map::new(env));
-        streaks.get(user.clone()).is_some()
+        let streaks: Map<Address, UserStreak> = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| Map::new(env));
+        let exists = streaks.get(user.clone()).is_some();
+        if exists {
+            StorageHelper::touch_streak(env, &key);
+        }
+        exists
     }
 
     /// Get a user's streak from storage
     fn get_streak_internal(env: &Env, user: &Address) -> UserStreak {
         let key = Self::streaks_storage_key(env);
-        let streaks: Map<Address, UserStreak> = env.storage().persistent().get(&key).unwrap_or_else(|| Map::new(env));
-        streaks.get(user.clone()).unwrap()
+        let streaks: Map<Address, UserStreak> = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| Map::new(env));
+        let streak = streaks.get(user.clone()).unwrap();
+        StorageHelper::touch_streak(env, &key);
+        streak
     }
 
     /// Store a user's streak
     fn store_streak(env: &Env, user: &Address, streak: UserStreak) {
         let key = Self::streaks_storage_key(env);
-        let mut streaks: Map<Address, UserStreak> = env.storage().persistent().get(&key).unwrap_or_else(|| Map::new(env));
+        let mut streaks: Map<Address, UserStreak> = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| Map::new(env));
         streaks.set(user.clone(), streak);
         env.storage().persistent().set(&key, &streaks);
+        StorageHelper::touch_streak(env, &key);
+    }
+
+    fn record_activity(env: &Env, user: &Address, period: u64) {
+        let key = StreakKey::ActivityHistory(user.clone());
+        let mut history: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| Vec::new(env));
+        history.push_back(period);
+        Self::store_activity_history(env, user, history);
+    }
+
+    fn store_activity_history(env: &Env, user: &Address, history: Vec<u64>) {
+        let key = StreakKey::ActivityHistory(user.clone());
+        env.storage().persistent().set(&key, &history);
+        StorageHelper::touch_streak(env, &key);
     }
 }
 
