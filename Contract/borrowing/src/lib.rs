@@ -1,5 +1,5 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, Address, BytesN, Env, Vec, Map, Symbol, IntoVal};
+use soroban_sdk::{contract, contractimpl, contracttype, Address, Bytes, BytesN, Env, Vec, Map, Symbol, IntoVal};
 use shared::errors::Error;
 use shared::events::{LoanIssued, LoanRepaid, LoanLiquidated, CollateralLocked, CollateralReleased};
 use shared::types::{CollateralConfig, LoanInfo, LoanStatus, PoolAccounting};
@@ -601,17 +601,35 @@ impl BorrowingContract {
         loan.collateral_amount < required_collateral
     }
 
+    /// Deterministically derive a loan ID from the borrower, the collateral
+    /// vault and the current ledger timestamp.
+    ///
+    /// The borrower's address is hashed into the ID so that two different
+    /// borrowers requesting the same asset pair in the same ledger
+    /// timestamp can never collide on the same loan ID. Hashing (rather
+    /// than off-chain data or randomness) keeps derivation on-chain and
+    /// fully deterministic: identical inputs always produce the identical
+    /// ID, which is required for the duplicate-loan check in `create_loan`
+    /// to keep working.
     fn derive_loan_id(env: &Env, borrower: &Address, collateral_vault_id: &BytesN<32>) -> BytesN<32> {
-        let mut bytes = [0u8; 32];
+        let mut payload = Bytes::new(env);
+
         let timestamp_bytes = env.ledger().timestamp().to_be_bytes();
-        for (index, byte) in timestamp_bytes.iter().enumerate() {
-            bytes[index] = *byte;
-        }
+        payload.extend_from_array(&timestamp_bytes);
+
         let vault_bytes = collateral_vault_id.to_array();
-        for (index, byte) in vault_bytes.iter().enumerate() {
-            bytes[(index + 16) % 32] ^= *byte;
-        }
-        BytesN::from_array(env, &bytes)
+        payload.extend_from_array(&vault_bytes);
+
+        // Encode the borrower's address (its Stellar strkey representation)
+        // and fold it into the payload so the loan ID is unique per
+        // borrower, not just per vault/timestamp.
+        let borrower_str = borrower.to_string();
+        let borrower_len = borrower_str.len() as usize;
+        let mut borrower_buf = [0u8; 64];
+        borrower_str.copy_into_slice(&mut borrower_buf[..borrower_len]);
+        payload.append(&Bytes::from_slice(env, &borrower_buf[..borrower_len]));
+
+        env.crypto().sha256(&payload)
     }
 
     fn get_loans(env: &Env) -> Map<BytesN<32>, LoanInfo> {
