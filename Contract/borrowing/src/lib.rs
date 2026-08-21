@@ -1,10 +1,9 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, Address, BytesN, Env, Vec, Map, Symbol, IntoVal, Val};
-use soroban_sdk::{contract, contractimpl, contracttype, Address, Bytes, BytesN, Env, Vec, Map, Symbol, IntoVal};
+use soroban_sdk::{contract, contractimpl, contracttype, Address, Bytes, BytesN, Env, Vec, Map, Symbol, IntoVal, Val};
 use shared::errors::Error;
-use shared::events::{LoanIssued, LoanRepaid, LoanLiquidated, CollateralLocked, CollateralReleased};
+use shared::events::{LoanIssued, LoanRepaid, CollateralLocked, CollateralReleased};
 use shared::types::{CollateralConfig, LoanInfo, LoanStatus, PoolAccounting};
-use shared::utils::{SafeMath, TimeHelper, ValidationHelper, FixedMath};
+use shared::utils::{SafeMath, TimeHelper, ValidationHelper};
 
 /// Storage keys for borrowing contract
 #[derive(Clone)]

@@ -3,8 +3,6 @@ resolver = "2"
 members = [
     "vault",
     "streaks",
-    "lending",
-    "borrowing",
     "rewards",
     "shared",
 ]
@@ -16,6 +14,9 @@ edition = "2021"
 [workspace.dependencies]
 soroban-sdk = "21.7.6"
 shared = { path = "shared" }
+vault = { path = "vault" }
+streaks = { path = "streaks" }
+rewards = { path = "rewards" }
 
 [patch.crates-io]
 ethnum = { path = "./ethnum-patch" }
