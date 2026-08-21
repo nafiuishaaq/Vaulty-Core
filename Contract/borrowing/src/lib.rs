@@ -629,7 +629,7 @@ impl BorrowingContract {
         borrower_str.copy_into_slice(&mut borrower_buf[..borrower_len]);
         payload.append(&Bytes::from_slice(env, &borrower_buf[..borrower_len]));
 
-        env.crypto().sha256(&payload)
+        env.crypto().sha256(&payload).into()
     }
 
     fn get_loans(env: &Env) -> Map<BytesN<32>, LoanInfo> {

@@ -28,9 +28,19 @@ jobs:
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: Contract -> target
 
       - name: Build contracts
-        run: cargo build --workspace
+        run: cargo build --workspace --all-targets
 
-      # - name: Run tests
-      #   run: cargo test --workspace
+      - name: Build contracts (wasm32)
+        run: cargo build --workspace --target wasm32-unknown-unknown --release
+
+      - name: Run tests
+        run: cargo test --workspace

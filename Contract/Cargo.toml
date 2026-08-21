@@ -14,7 +14,7 @@ version = "0.1.0"
 edition = "2021"
 
 [workspace.dependencies]
-soroban-sdk = "20.5.0"
+soroban-sdk = "21.7.6"
 shared = { path = "shared" }
 
 [patch.crates-io]
