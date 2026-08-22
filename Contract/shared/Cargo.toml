@@ -5,6 +5,8 @@ edition.workspace = true
 
 [dependencies]
 soroban-sdk.workspace = true
+# Pin ed25519-dalek <3 to keep compat with soroban-env-host 21.x
+ed25519-dalek.workspace = true
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }

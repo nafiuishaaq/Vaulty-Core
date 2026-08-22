@@ -1,376 +1,281 @@
 #![no_std]
-use shared::{
-    errors::Error,
-    events::{StreakFreezeUsed, StreakUpdated},
-    storage::StorageHelper,
-    types::UserStreak,
-    utils::StreakTimeHelper,
-};
-use soroban_sdk::{contract, contractimpl, contracttype, Address, BytesN, Env, Map, Vec};
 
-/// Storage keys for streaks contract
-#[derive(Clone)]
-#[contracttype]
-pub enum StreakKey {
-    StreakInfo(Address),
-    ActivityHistory(Address),
-    StreakConfig,
-    RateLimit,
-    AdminPermissions(Address),
-    GlobalStreakCount,
-    Leaderboard,
-}
+mod activity;
+mod authorization;
+mod events;
+mod leaderboard;
+mod state;
+mod ttl;
 
-/// Streak information for a user
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[contracttype]
-pub struct StreakInfo {
-    pub user: Address,
-    pub current_streak: u32,
-    pub longest_streak: u32,
-    pub last_activity: u64,
-    pub streak_start: u64,
-    pub total_activities: u64,
-    pub multiplier: u32, // Reward multiplier based on streak length
-}
+use shared::{errors::Error, types::UserStreak, utils::StreakTimeHelper};
+use soroban_sdk::{contract, contractimpl, Address, Env, Vec};
 
-/// Streaks contract for tracking user activity streaks
-/// Tracks:
-/// - Current streak: consecutive days of activity
-/// - Longest streak: maximum consecutive days ever achieved
-/// - Last activity period: UTC day of last valid streak update
-/// - Available freezes: number of missed days that can be forgiven
+use crate::activity::Activity;
+use crate::authorization::Authorization;
+use crate::events::Events;
+use crate::leaderboard::Leaderboard;
+use crate::state::{State, INITIAL_FREEZES};
+use crate::ttl::Ttl;
+
+/// Streak state machine for vault-integrated daily activity tracking.
+///
+/// This contract exposes exactly one authorized implementation for each streak
+/// operation. Deposit-triggered updates require vault-contract authorization,
+/// while user-triggered actions require the user's own authorization.
+///
+/// ## Behavioral rules (preserved)
+/// - **Consecutive day**: streak increments by 1.
+/// - **One missed day with freeze**: a freeze is consumed and streak continues.
+/// - **One missed day without freeze**: streak resets to 1.
+/// - **Two or more missed days**: streak resets to 1.
+/// - **Duplicate activity in the same UTC day**: rejected with `Error::DuplicateActivity`.
+///
+/// ## Authorization model
+/// - `initialize`, `add_authorized_caller`, `update_streak`, `add_freezes`
+///   require the caller to be in the authorized callers list.
+/// - `use_freeze` requires the user's own authorization via `require_auth`.
+///
+/// ## UTC day boundaries
+/// Activity is tracked in UTC day periods (timestamps floored to midnight UTC).
+/// All boundary decisions are deterministic on-chain.
 #[contract]
 pub struct StreaksContract;
 
-// Storage key constants
-const VAULT_CONTRACT_KEY: &[u8; 32] = b"vault_contract_address______\0\0\0\0";
-const AUTHORIZED_CALLERS_KEY: &[u8; 32] = b"authorized_callers__________\0\0\0\0";
-const INITIALIZE_FREEZES: u32 = 3; // Start with 3 freezes for all users
-                                   // const DAILY_RESET_HOUR: u64 = 0; // UTC midnight reset
-
 #[contractimpl]
 impl StreaksContract {
-    /// Initialize the streaks contract with authorized vault address
-    /// Can only be called once
-    pub fn initialize(env: Env, vault_contract: Address) {
-        // Check if already initialized
-        let vault_key = BytesN::from_array(&env, VAULT_CONTRACT_KEY);
-        if env.storage().instance().has(&vault_key) {
-            panic!("{:?}", Error::AlreadyInitialized);
+    /// Initialize the streaks contract with the vault contract as the first authorized caller.
+    ///
+    /// # Authorization
+    /// May only be called once; subsequent calls return `Error::AlreadyInitialized`.
+    ///
+    /// # Errors
+    /// - `Error::AlreadyInitialized` if the contract has already been initialized.
+    pub fn initialize(env: Env, vault_contract: Address) -> Result<(), Error> {
+        if State::is_initialized(&env) {
+            return Err(Error::AlreadyInitialized);
         }
 
-        // Store authorized vault contract
-        env.storage().instance().set(&vault_key, &vault_contract);
-
-        // Create and store authorized callers set
-        let mut authorized = soroban_sdk::Vec::new(&env);
+        let mut authorized = Vec::new(&env);
         authorized.push_back(vault_contract);
-        let auth_key = BytesN::from_array(&env, AUTHORIZED_CALLERS_KEY);
-        env.storage().instance().set(&auth_key, &authorized);
+        State::set_authorized_callers(&env, &authorized);
+        Ttl::refresh_authorized_callers(&env);
+
+        Ok(())
     }
 
-    /// Add an additional authorized caller (only existing authorized contracts can add)
-    pub fn add_authorized_caller(env: Env, caller: Address) {
-        // Verify caller is authorized
-        Self::verify_authorization(&env);
+    /// Add an additional authorized caller.
+    ///
+    /// # Authorization
+    /// Requires vault authorization.
+    ///
+    /// # Errors
+    /// - `Error::NotInitialized` if the contract has not been initialized.
+    /// - `Error::Unauthorized` if the caller is not authorized.
+    pub fn add_authorized_caller(env: Env, caller: Address) -> Result<(), Error> {
+        Authorization::require_vault_authorization(&env)?;
+        Authorization::ensure_initialized(&env)?;
 
-        let auth_key = BytesN::from_array(&env, AUTHORIZED_CALLERS_KEY);
-        let mut authorized: soroban_sdk::Vec<Address> =
-            env.storage().instance().get(&auth_key).unwrap();
+        let mut authorized = State::get_authorized_callers(&env)?;
 
-        // Check if already in list
         if authorized.contains(&caller) {
-            return;
+            return Ok(());
         }
 
         authorized.push_back(caller);
-        env.storage().instance().set(&auth_key, &authorized);
+        State::set_authorized_callers(&env, &authorized);
+        Ttl::refresh_authorized_callers(&env);
+
+        Ok(())
     }
 
-    /// Initialize a user's streak if they don't have one yet
-    /// Can only be called by authorized contracts
-    pub fn initialize_streak(env: Env, user: Address) {
-        // Verify authorization
-        Self::verify_authorization(&env);
+    /// Initialize a user's streak if one does not already exist.
+    ///
+    /// # Authorization
+    /// Requires vault authorization.
+    ///
+    /// # Errors
+    /// - `Error::NotInitialized` if the contract has not been initialized.
+    /// - `Error::Unauthorized` if the caller is not authorized.
+    pub fn initialize_streak(env: Env, user: Address) -> Result<(), Error> {
+        Authorization::require_vault_authorization(&env)?;
+        Authorization::ensure_initialized(&env)?;
 
-        // Check if streak already exists
-        if Self::streak_exists(&env, &user) {
-            return;
+        if State::streak_exists(&env, &user) {
+            return Ok(());
         }
 
-        // Create initial streak state
         let current_period = StreakTimeHelper::get_current_period(&env);
         let streak = UserStreak {
             current_streak: 1,
             longest_streak: 1,
             last_activity_period: current_period,
-            available_freezes: INITIALIZE_FREEZES,
+            available_freezes: INITIAL_FREEZES,
         };
 
-        // Store the streak
-        Self::store_streak(&env, &user, streak);
-        Self::store_activity_history(&env, &user, Vec::new(&env));
+        State::set_streak(&env, &user, &streak)?;
+        let empty_history = Vec::new(&env);
+        State::set_activity_history(&env, &user, &empty_history)?;
 
-        // Emit event
-        env.events().publish(
-            ("streak_updated", user.clone()),
-            StreakUpdated {
-                user,
-                streak_count: 1,
-                last_activity: current_period,
-            },
-        );
+        Events::streak_updated(&env, &user, 1, current_period);
+
+        Ok(())
     }
 
-    /// Update a user's streak after verified deposit activity
-    /// Only authorized vault contract can call this
-    /// Handles streak continuation, missed days, and freeze usage
-    pub fn update_streak(env: Env, user: Address) {
-        // Verify authorization
-        Self::verify_authorization(&env);
+    /// Update a user's streak after verified vault deposit activity.
+    ///
+    /// Handles streak continuation, missed-day freeze usage, and multi-day resets.
+    /// Rejects duplicate activity in the same UTC day.
+    ///
+    /// # Authorization
+    /// Requires vault authorization.
+    ///
+    /// # Errors
+    /// - `Error::NotInitialized` if the contract has not been initialized.
+    /// - `Error::Unauthorized` if the caller is not authorized.
+    /// - `Error::DuplicateActivity` if the user already has activity in the current UTC day.
+    pub fn update_streak(env: Env, user: Address) -> Result<(), Error> {
+        Authorization::require_vault_authorization(&env)?;
+        Authorization::ensure_initialized(&env)?;
 
         let current_period = StreakTimeHelper::get_current_period(&env);
 
-        // Get or initialize streak
-        let mut streak = if Self::streak_exists(&env, &user) {
-            Self::get_streak_internal(&env, &user)
+        let mut streak = if State::streak_exists(&env, &user) {
+            State::get_streak(&env, &user)?
         } else {
-            // Initialize streak if it doesn't exist
             let new_streak = UserStreak {
                 current_streak: 1,
                 longest_streak: 1,
                 last_activity_period: current_period,
-                available_freezes: INITIALIZE_FREEZES,
+                available_freezes: INITIAL_FREEZES,
             };
-            Self::store_streak(&env, &user, new_streak.clone());
-            new_streak
+            State::set_streak(&env, &user, &new_streak)?;
+            let empty_history = Vec::new(&env);
+            State::set_activity_history(&env, &user, &empty_history)?;
+            Events::streak_updated(&env, &user, 1, current_period);
+            return Ok(());
         };
 
-        // Check for duplicate activity in the same period
-        if streak.last_activity_period == current_period {
-            panic!("{:?}", Error::DuplicateActivity);
-        }
+        Activity::reject_duplicate(&env, &user, current_period)?;
 
-        // Check if activity is consecutive day
-        if StreakTimeHelper::is_consecutive_day(streak.last_activity_period, current_period) {
-            // Continue streak
-            streak.current_streak += 1;
+        let days_since_last =
+            StreakTimeHelper::days_between(streak.last_activity_period, current_period);
+
+        if days_since_last == 1 {
+            streak.current_streak = streak
+                .current_streak
+                .checked_add(1)
+                .ok_or(Error::Overflow)?;
             if streak.current_streak > streak.longest_streak {
                 streak.longest_streak = streak.current_streak;
             }
             streak.last_activity_period = current_period;
-        }
-        // Check if missed exactly one day - can use a freeze
-        else if StreakTimeHelper::days_between(streak.last_activity_period, current_period) == 2 {
-            // Use a freeze if available
-            if streak.available_freezes > 0 {
-                streak.available_freezes -= 1;
-                streak.current_streak += 1;
-                if streak.current_streak > streak.longest_streak {
-                    streak.longest_streak = streak.current_streak;
-                }
-                streak.last_activity_period = current_period;
-
-                // Emit freeze used event
-                env.events().publish(
-                    ("freeze_used", user.clone()),
-                    StreakFreezeUsed {
-                        user: user.clone(),
-                        remaining_freezes: streak.available_freezes,
-                    },
-                );
-            } else {
-                // No freezes left, reset streak
-                streak.current_streak = 1;
-                streak.last_activity_period = current_period;
+        } else if days_since_last == 2 && streak.available_freezes > 0 {
+            streak.available_freezes -= 1;
+            streak.current_streak = streak
+                .current_streak
+                .checked_add(1)
+                .ok_or(Error::Overflow)?;
+            if streak.current_streak > streak.longest_streak {
+                streak.longest_streak = streak.current_streak;
             }
-        }
-        // Missed more than one day - reset streak
-        else {
+            streak.last_activity_period = current_period;
+
+            Events::freeze_used(&env, &user, streak.available_freezes);
+        } else {
             streak.current_streak = 1;
             streak.last_activity_period = current_period;
         }
 
-        // Save updated streak
-        Self::store_streak(&env, &user, streak.clone());
-        Self::record_activity(&env, &user, current_period);
+        State::set_streak(&env, &user, &streak)?;
+        Activity::record(&env, &user, current_period)?;
 
-        // Emit streak updated event
-        env.events().publish(
-            ("streak_updated", user.clone()),
-            StreakUpdated {
-                user,
-                streak_count: streak.current_streak,
-                last_activity: streak.last_activity_period,
-            },
-        );
+        Leaderboard::update_leaderboard(&env, &user, streak.current_streak)?;
+
+        Events::streak_updated(&env, &user, streak.current_streak, streak.last_activity_period);
+
+        Ok(())
     }
 
-    /// Use a streak freeze manually to save current streak if missed a day
-    /// User must authorize this action
-    pub fn use_freeze(env: Env, user: Address) {
-        user.require_auth();
+    /// Manually consume one of the user's available freezes.
+    ///
+    /// # Authorization
+    /// Requires the user's own authorization.
+    ///
+    /// # Errors
+    /// - `Error::StreakNotFound` if the user has no streak.
+    /// - `Error::NoFreezesAvailable` if the user has no freezes left.
+    pub fn use_freeze(env: Env, user: Address) -> Result<(), Error> {
+        Authorization::require_user_authorization(&user)?;
 
-        if !Self::streak_exists(&env, &user) {
-            panic!("{:?}", Error::StreakNotFound);
-        }
+        let mut streak = State::get_streak(&env, &user)?;
 
-        let mut streak = Self::get_streak_internal(&env, &user);
         if streak.available_freezes == 0 {
-            panic!("{:?}", Error::NoFreezesAvailable);
+            return Err(Error::NoFreezesAvailable);
         }
 
         streak.available_freezes -= 1;
-        Self::store_streak(&env, &user, streak.clone());
+        State::set_streak(&env, &user, &streak)?;
 
-        env.events().publish(
-            ("freeze_used", user.clone()),
-            StreakFreezeUsed {
-                user,
-                remaining_freezes: streak.available_freezes,
-            },
-        );
+        Events::freeze_used(&env, &user, streak.available_freezes);
+
+        Ok(())
     }
 
-    /// Add freezes to a user's account (only authorized)
-    pub fn add_freezes(env: Env, user: Address, amount: u32) {
-        Self::verify_authorization(&env);
+    /// Add freezes to a user's account.
+    ///
+    /// # Authorization
+    /// Requires vault authorization.
+    ///
+    /// # Errors
+    /// - `Error::NotInitialized` if the contract has not been initialized.
+    /// - `Error::Unauthorized` if the caller is not authorized.
+    /// - `Error::StreakNotFound` if the user has no streak.
+    pub fn add_freezes(env: Env, user: Address, amount: u32) -> Result<(), Error> {
+        Authorization::require_vault_authorization(&env)?;
+        Authorization::ensure_initialized(&env)?;
 
-        if !Self::streak_exists(&env, &user) {
-            panic!("{:?}", Error::StreakNotFound);
-        }
+        let mut streak = State::get_streak(&env, &user)?;
 
-        let mut streak = Self::get_streak_internal(&env, &user);
         streak.available_freezes = streak
             .available_freezes
             .checked_add(amount)
-            .unwrap_or(streak.available_freezes);
-        Self::store_streak(&env, &user, streak);
+            .ok_or(Error::Overflow)?;
+
+        State::set_streak(&env, &user, &streak)?;
+
+        Ok(())
     }
 
-    /// Get a user's full streak data
-    pub fn get_user_streak(env: Env, user: Address) -> UserStreak {
-        if !Self::streak_exists(&env, &user) {
-            panic!("{:?}", Error::StreakNotFound);
-        }
-        Self::get_streak_internal(&env, &user)
+    /// Get the user's full streak data.
+    ///
+    /// # Errors
+    /// - `Error::StreakNotFound` if the user has no streak.
+    pub fn get_user_streak(env: Env, user: Address) -> Result<UserStreak, Error> {
+        State::get_streak(&env, &user)
     }
 
-    /// Get a user's current streak count
+    /// Get the user's current streak count.
+    ///
+    /// Returns `0` if the user has no streak.
     pub fn get_streak(env: Env, user: Address) -> u32 {
-        if !Self::streak_exists(&env, &user) {
-            0
-        } else {
-            Self::get_streak_internal(&env, &user).current_streak
-        }
+        State::get_streak(&env, &user)
+            .map(|s| s.current_streak)
+            .unwrap_or(0)
     }
 
-    /// Check if a user's streak is currently active (activity in last 48 hours)
+    /// Check whether the user's streak is active (activity within last 48 hours).
     pub fn is_streak_active(env: Env, user: Address) -> bool {
-        if !Self::streak_exists(&env, &user) {
-            return false;
-        }
+        let streak = match State::get_streak(&env, &user) {
+            Ok(s) => s,
+            Err(_) => return false,
+        };
 
-        let streak = Self::get_streak_internal(&env, &user);
         let current_period = StreakTimeHelper::get_current_period(&env);
-        // Active if last activity was either today or yesterday (within 48 hours)
-        (current_period - streak.last_activity_period) <= 86400 * 2
+        current_period.saturating_sub(streak.last_activity_period) <= 86400 * 2
     }
 
-    /// Get the periods in which a user recorded streak activity.
-    pub fn get_activity_history(env: Env, user: Address) -> Vec<u64> {
-        let key = StreakKey::ActivityHistory(user);
-        let history = env
-            .storage()
-            .persistent()
-            .get(&key)
-            .unwrap_or_else(|| Vec::new(&env));
-
-        if env.storage().persistent().has(&key) {
-            StorageHelper::touch_streak(&env, &key);
-        }
-
-        history
+    /// Get the UTC day periods in which the user recorded streak activity.
+    pub fn get_activity_history(env: Env, user: Address) -> Result<Vec<u64>, Error> {
+        State::get_activity_history(&env, &user)
     }
-
-    /// Internal helper to verify caller is authorized
-    fn verify_authorization(env: &Env) {
-        let auth_key = BytesN::from_array(env, AUTHORIZED_CALLERS_KEY);
-        let authorized: Option<soroban_sdk::Vec<Address>> = env.storage().instance().get(&auth_key);
-
-        if authorized.is_none() {
-            panic!("{:?}", Error::Unauthorized);
-        }
-
-        let _authorized = authorized.unwrap();
-    }
-
-    /// Internal helper to create storage key for the streak map
-    fn streaks_storage_key(env: &Env) -> BytesN<32> {
-        BytesN::from_array(env, &[7u8; 32])
-    }
-
-    /// Check if a user has a streak stored
-    fn streak_exists(env: &Env, user: &Address) -> bool {
-        let key = Self::streaks_storage_key(env);
-        let streaks: Map<Address, UserStreak> = env
-            .storage()
-            .persistent()
-            .get(&key)
-            .unwrap_or_else(|| Map::new(env));
-        let exists = streaks.get(user.clone()).is_some();
-        if exists {
-            StorageHelper::touch_streak(env, &key);
-        }
-        exists
-    }
-
-    /// Get a user's streak from storage
-    fn get_streak_internal(env: &Env, user: &Address) -> UserStreak {
-        let key = Self::streaks_storage_key(env);
-        let streaks: Map<Address, UserStreak> = env
-            .storage()
-            .persistent()
-            .get(&key)
-            .unwrap_or_else(|| Map::new(env));
-        let streak = streaks.get(user.clone()).unwrap();
-        StorageHelper::touch_streak(env, &key);
-        streak
-    }
-
-    /// Store a user's streak
-    fn store_streak(env: &Env, user: &Address, streak: UserStreak) {
-        let key = Self::streaks_storage_key(env);
-        let mut streaks: Map<Address, UserStreak> = env
-            .storage()
-            .persistent()
-            .get(&key)
-            .unwrap_or_else(|| Map::new(env));
-        streaks.set(user.clone(), streak);
-        env.storage().persistent().set(&key, &streaks);
-        StorageHelper::touch_streak(env, &key);
-    }
-
-    fn record_activity(env: &Env, user: &Address, period: u64) {
-        let key = StreakKey::ActivityHistory(user.clone());
-        let mut history: Vec<u64> = env
-            .storage()
-            .persistent()
-            .get(&key)
-            .unwrap_or_else(|| Vec::new(env));
-        history.push_back(period);
-        Self::store_activity_history(env, user, history);
-    }
-
-    fn store_activity_history(env: &Env, user: &Address, history: Vec<u64>) {
-        let key = StreakKey::ActivityHistory(user.clone());
-        env.storage().persistent().set(&key, &history);
-        StorageHelper::touch_streak(env, &key);
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
 }
