@@ -126,7 +126,28 @@ This rule applies uniformly to both the `withdraw()` function (which panics
 with "Vault is locked" if `now < unlock_time`) and the `is_locked()` query
 (which returns `false` when `now >= unlock_time`).
 
+### Vault Interest & Yield Model
+
+The vault contract tracks interest accrual and adheres to strict backing and accounting rules:
+
+1. **Per-Vault Last-Accrual Timestamping**:
+   - Each vault maintains a dedicated `last_accrual` timestamp initialized to the vault's `created_at` timestamp.
+   - Every accrual calculation determines elapsed time strictly as `now - last_accrual` and advances `last_accrual` to `now`.
+   - Repeated accrual requests at the exact same ledger timestamp produce `0` newly accrued yield (`elapsed == 0`), preventing duplicate yield creation.
+   - Sequential accruals across split intervals (e.g., $[t_0, t_1]$ and $[t_1, t_2]$) are strictly disjoint and non-overlapping.
+
+2. **Backed Withdrawable Balances vs. Informational Yield**:
+   - **Current Classification**: Vaults operate as **non-yield savings vaults** with **informational yield tracking**.
+   - Withdrawable vault balances (`VaultKey::Balance`) are strictly backed **1:1** by deposited assets held in the vault contract custody.
+   - Accrued interest is stored in `VaultKey::VaultInterest` as purely informational and reporting metrics. It does **not** inflate withdrawable balances.
+   - This ensures the contract remains fully solvent at all times and eliminates the risk of unbacked liabilities or misrepresenting yield to depositors.
+
+3. **On-Chain Yield Funding Requirement**:
+   - Creating withdrawable yield requires an approved on-chain funding source (such as an external yield generator, protocol reserve, or rewards contract) to deposit/transfer matching tokens into vault custody before balances can be credited.
+   - Without verified on-chain token transfers into the vault, all accrued yield remains informational and non-withdrawable.
+
 ---
+
 
 ## 🔥 Streak Contract
 

@@ -52,6 +52,27 @@ fn test_get_balance_unknown_id_returns_vault_not_found() {
 }
 
 // ---------------------------------------------------------------------------
+// get_accrued_interest / get_last_accrual_time
+// ---------------------------------------------------------------------------
+
+/// `get_accrued_interest` must return `Err(VaultNotFound)` for an unknown vault ID.
+#[test]
+fn test_get_accrued_interest_unknown_id_returns_vault_not_found() {
+    let (env, contract_id) = setup_env();
+    let result = VaultContract::get_accrued_interest(&env, &contract_id, &ghost_vault_id(&env));
+    assert_eq!(result, Err(Error::VaultNotFound));
+}
+
+/// `get_last_accrual_time` must return `Err(VaultNotFound)` for an unknown vault ID.
+#[test]
+fn test_get_last_accrual_time_unknown_id_returns_vault_not_found() {
+    let (env, contract_id) = setup_env();
+    let result = VaultContract::get_last_accrual_time(&env, &contract_id, &ghost_vault_id(&env));
+    assert_eq!(result, Err(Error::VaultNotFound));
+}
+
+
+// ---------------------------------------------------------------------------
 // get_lock_period / get_unlock_time
 // ---------------------------------------------------------------------------
 
