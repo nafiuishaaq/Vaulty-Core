@@ -1,34 +1,24 @@
 #![no_std]
+
+pub mod interest;
+pub mod state;
+
 use soroban_sdk::{
-    contract, contractimpl, contracttype, Address, BytesN, Env, token, IntoVal, Map, Vec, Symbol,
+    contract, contractimpl, token, Address, BytesN, Env, IntoVal, Map, Symbol, Vec,
 };
 use shared::{
     errors::Error,
     events::{DepositMade, VaultCreated, VaultUnlocked, WithdrawalCompleted},
-    storage::{StorageHelper, StorageTTL},
-    types::{Asset, VaultMetadata, VaultStatus, EmergencyStop, RateLimit, Role, Permission},
-    utils::{FixedMath, SafeMath, TimeHelper, ValidationHelper},
+    storage::StorageHelper,
+    types::{Asset, EmergencyStop, RateLimit, VaultMetadata, VaultStatus},
+    utils::{SafeMath, TimeHelper, ValidationHelper},
 };
+
+pub use state::{VaultConfig, VaultId, VaultKey};
 
 /// Vault contract for managing savings vaults with time-locked deposits
 #[contract]
 pub struct VaultContract;
-
-/// Storage keys for vault contract
-#[derive(Clone)]
-#[contracttype]
-pub enum VaultKey {
-    Vault(VaultId),
-    Balance(VaultId),
-    VaultCounter,
-    VaultConfig,
-    EmergencyStop,
-    RateLimit,
-    Admin,
-    AdminPermissions(Address),
-    UserVaults(Address),
-    VaultInterest(VaultId),
-}
 
 #[cfg(test)]
 pub use VaultContract;
@@ -42,16 +32,6 @@ fn balances_key(env: &Env) -> BytesN<32> {
     BytesN::from_array(env, &[1u8; 32])
 }
 
-#[contracttype]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct VaultConfig {
-    pub max_vaults_per_user: u64,
-    pub min_lock_period: u64,
-    pub max_lock_period: u64,
-    pub interest_rate: i128, // Basis points
-    pub auto_compound: bool,
-}
-
 fn streaks_contract_key(env: &Env) -> BytesN<32> {
     BytesN::from_array(env, &[3u8; 32])
 }
@@ -59,10 +39,6 @@ fn streaks_contract_key(env: &Env) -> BytesN<32> {
 fn rewards_contract_key(env: &Env) -> BytesN<32> {
     BytesN::from_array(env, &[4u8; 32])
 }
-
-#[contracttype]
-#[derive(Clone, PartialEq, Eq)]
-pub struct VaultId(BytesN<32>);
 
 #[contractimpl]
 impl VaultContract {
@@ -85,7 +61,11 @@ impl VaultContract {
     /// (Called during setup)
     pub fn register_with_streaks(env: Env) {
         let streaks_key = streaks_contract_key(&env);
-        let streaks_contract: Address = env.storage().instance().get(&streaks_key).expect("Streaks contract not initialized");
+        let streaks_contract: Address = env
+            .storage()
+            .instance()
+            .get(&streaks_key)
+            .expect("Streaks contract not initialized");
 
         let mut args = Vec::new(&env);
         args.push_back(env.current_contract_address().into_val(&env));
@@ -131,13 +111,7 @@ impl VaultContract {
             .storage()
             .persistent()
             .get(&VaultKey::VaultConfig)
-            .unwrap_or(VaultConfig {
-                max_vaults_per_user: 10,
-                min_lock_period: 1,
-                max_lock_period: 157_788_000, // 5 years
-                interest_rate: 500, // 5%
-                auto_compound: true,
-            });
+            .unwrap_or_default();
 
         // Validate lock period
         if lock_period < config.min_lock_period || lock_period > config.max_lock_period {
@@ -194,17 +168,23 @@ impl VaultContract {
             .set(&VaultKey::Vault(vault_id.clone()), &metadata);
         StorageHelper::touch_vault(&env, &VaultKey::Vault(vault_id.clone()));
 
-        // Initialize balance to zero
+        // Initialize withdrawable balance to zero
         env.storage()
             .persistent()
             .set(&VaultKey::Balance(vault_id.clone()), &0i128);
         StorageHelper::touch_vault(&env, &VaultKey::Balance(vault_id.clone()));
 
-        // Initialize interest tracking
+        // Initialize informational accrued interest to zero
         env.storage()
             .persistent()
             .set(&VaultKey::VaultInterest(vault_id.clone()), &0i128);
         StorageHelper::touch_vault(&env, &VaultKey::VaultInterest(vault_id.clone()));
+
+        // Initialize last accrual timestamp to vault creation time
+        env.storage()
+            .persistent()
+            .set(&VaultKey::LastAccrual(vault_id.clone()), &now);
+        StorageHelper::touch_vault(&env, &VaultKey::LastAccrual(vault_id.clone()));
 
         // Add to user's vaults
         let mut updated_user_vaults = user_vaults;
@@ -278,13 +258,13 @@ impl VaultContract {
             .ok_or(Error::VaultNotFound)?;
         StorageHelper::touch_vault(&env, &VaultKey::Vault(vault_id.clone()));
 
-        // Accrue interest before deposit
-        Self::accrue_interest(env.clone(), vault_id.clone())?;
+        // Accrue interest up to current timestamp before deposit
+        interest::accrue_vault_interest(&env, &vault_id)?;
 
         let token_client = token::Client::new(&env, &metadata.asset.token);
         token_client.transfer(&from, &env.current_contract_address(), &amount);
 
-        // Update direct balance entry
+        // Update direct balance entry (backed 1:1 by deposited tokens)
         let current_balance: i128 = env
             .storage()
             .persistent()
@@ -363,7 +343,7 @@ impl VaultContract {
     /// # Arguments
     /// * `vault_id` - The vault to withdraw from
     /// * `to` - The address to receive funds
-    /// * `amount` - The amount to withdraw (must be positive and <= balance)
+    /// * `amount` - The amount to withdraw (must be positive and <= backed balance)
     ///
     /// # Auth
     /// Requires authorization from the vault owner
@@ -388,8 +368,8 @@ impl VaultContract {
             return Err(Error::InvalidAmount);
         }
 
-        // Accrue interest before withdrawal
-        Self::accrue_interest(env.clone(), vault_id.clone())?;
+        // Accrue interest up to current timestamp before withdrawal
+        interest::accrue_vault_interest(&env, &vault_id)?;
 
         // Check lock period and prevent unsafe withdrawal near expiry
         if metadata.status == VaultStatus::Locked {
@@ -447,13 +427,13 @@ impl VaultContract {
         Ok(())
     }
 
-    /// Get the balance of a vault
+    /// Get the withdrawable balance of a vault (strictly 1:1 backed by deposited assets)
     ///
     /// # Arguments
     /// * `vault_id` - The vault to query
     ///
     /// # Returns
-    /// The current balance of the vault
+    /// The current withdrawable balance of the vault
     pub fn get_balance(env: Env, vault_id: VaultId) -> Result<i128, Error> {
         let balance: i128 = env
             .storage()
@@ -462,6 +442,57 @@ impl VaultContract {
             .ok_or(Error::VaultNotFound)?;
         StorageHelper::touch_vault(&env, &VaultKey::Balance(vault_id));
         Ok(balance)
+    }
+
+    /// Get the cumulative informational accrued interest for a vault
+    ///
+    /// # Arguments
+    /// * `vault_id` - The vault to query
+    ///
+    /// # Returns
+    /// The cumulative accrued yield (non-withdrawable without funding)
+    pub fn get_accrued_interest(env: Env, vault_id: VaultId) -> Result<i128, Error> {
+        let interest: i128 = env
+            .storage()
+            .persistent()
+            .get(&VaultKey::VaultInterest(vault_id.clone()))
+            .ok_or(Error::VaultNotFound)?;
+        StorageHelper::touch_vault(&env, &VaultKey::VaultInterest(vault_id));
+        Ok(interest)
+    }
+
+    /// Get the last accrual timestamp for a vault
+    ///
+    /// # Arguments
+    /// * `vault_id` - The vault to query
+    ///
+    /// # Returns
+    /// The timestamp in seconds when interest was last accrued
+    pub fn get_last_accrual_time(env: Env, vault_id: VaultId) -> Result<u64, Error> {
+        let last_accrual: u64 = env
+            .storage()
+            .persistent()
+            .get(&VaultKey::LastAccrual(vault_id.clone()))
+            .ok_or(Error::VaultNotFound)?;
+        StorageHelper::touch_vault(&env, &VaultKey::LastAccrual(vault_id));
+        Ok(last_accrual)
+    }
+
+    /// Explicitly trigger interest accrual for a vault
+    ///
+    /// # Arguments
+    /// * `vault_id` - The vault to accrue interest for
+    ///
+    /// # Returns
+    /// The newly accrued interest for the period since last accrual
+    pub fn accrue_vault_interest(env: Env, vault_id: VaultId) -> Result<i128, Error> {
+        interest::accrue_vault_interest(&env, &vault_id)
+    }
+
+    /// Compatibility wrapper for interest accrual
+    pub fn accrue_interest(env: Env, vault_id: VaultId) -> Result<(), Error> {
+        interest::accrue_vault_interest(&env, &vault_id)?;
+        Ok(())
     }
 
     /// Get the metadata of a vault
@@ -508,66 +539,6 @@ impl VaultContract {
             .unwrap_or(Vec::new(&env));
         StorageHelper::touch_user(&env, &VaultKey::UserVaults(user));
         Ok(user_vaults)
-    }
-
-    /// Accrue interest for a vault
-    fn accrue_interest(env: Env, vault_id: VaultId) -> Result<(), Error> {
-        let config: VaultConfig = env
-            .storage()
-            .persistent()
-            .get(&VaultKey::VaultConfig)
-            .unwrap_or(VaultConfig {
-                max_vaults_per_user: 10,
-                min_lock_period: 1,
-                max_lock_period: 157_788_000,
-                interest_rate: 500,
-                auto_compound: true,
-            });
-
-        let metadata: VaultMetadata = env
-            .storage()
-            .persistent()
-            .get(&VaultKey::Vault(vault_id.clone()))
-            .ok_or(Error::VaultNotFound)?;
-        StorageHelper::touch_vault(&env, &VaultKey::Vault(vault_id.clone()));
-
-        let balance: i128 = env
-            .storage()
-            .persistent()
-            .get(&VaultKey::Balance(vault_id.clone()))
-            .ok_or(Error::VaultNotFound)?;
-        StorageHelper::touch_vault(&env, &VaultKey::Balance(vault_id.clone()));
-
-        if balance == 0 || config.interest_rate == 0 {
-            return Ok(());
-        }
-
-        let now = TimeHelper::now(&env);
-        let elapsed = now.saturating_sub(metadata.created_at);
-
-        if elapsed == 0 {
-            return Ok(());
-        }
-
-        // Calculate interest: balance * rate * time / (seconds_per_year * 10000)
-        let seconds_per_year = 31_536_000i128;
-        let interest = FixedMath::calculate_interest(
-            balance,
-            FixedMath::basis_points_to_fixed(config.interest_rate) / seconds_per_year,
-            elapsed as i128,
-        ).ok_or(Error::Overflow)?;
-
-        if interest > 0 && config.auto_compound {
-            let new_balance = SafeMath::add(balance, interest).ok_or(Error::Overflow)?;
-            env.storage()
-                .persistent()
-                .set(&VaultKey::Balance(vault_id.clone()), &new_balance);
-            env.storage()
-                .persistent()
-                .set(&VaultKey::VaultInterest(vault_id.clone()), &interest);
-        }
-
-        Ok(())
     }
 
     /// Check if a vault is currently locked.
@@ -647,13 +618,7 @@ impl VaultContract {
             .storage()
             .persistent()
             .get(&VaultKey::VaultConfig)
-            .unwrap_or(VaultConfig {
-                max_vaults_per_user: 10,
-                min_lock_period: 1,
-                max_lock_period: 157_788_000,
-                interest_rate: 500,
-                auto_compound: true,
-            });
+            .unwrap_or_default();
         StorageHelper::touch_vault(&env, &VaultKey::VaultConfig);
         Ok(config)
     }
@@ -784,7 +749,7 @@ impl VaultContract {
         // Remove from old owner's vault list
         let old_owner = metadata.owner.clone();
         let old_user_vaults_key = VaultKey::UserVaults(old_owner.clone());
-        if let Some(mut old_user_vaults) = env.storage().persistent().get::<_, Vec<VaultId>>(&old_user_vaults_key) {
+        if let Some(old_user_vaults) = env.storage().persistent().get::<_, Vec<VaultId>>(&old_user_vaults_key) {
             let mut new_user_vaults = Vec::new(&env);
             for i in 0..old_user_vaults.len() {
                 let v = old_user_vaults.get(i).unwrap();
