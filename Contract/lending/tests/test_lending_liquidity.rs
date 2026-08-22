@@ -8,12 +8,16 @@ use soroban_sdk::{Address, BytesN, Env};
 /// Common fixture: a freshly created pool plus the addresses used by the tests.
 struct PoolFixture<'a> {
     client: LendingContractClient<'a>,
+    env: &'a Env,
     pool_id: BytesN<32>,
     lender: Address,
     borrower: Address,
+    /// The address registered as the pool's authorized borrowing contract.
+    borrowing_contract: Address,
 }
 
-/// Register the lending contract and create a single pool.
+/// Register the lending contract and create a single pool with an authorized
+/// borrowing contract already configured.
 ///
 /// `derive_pool_id` copies the asset bytes verbatim, so the pool id is the
 /// asset id.
@@ -29,12 +33,26 @@ fn setup(env: &Env) -> PoolFixture<'_> {
     // 5% APR in basis points.
     client.create_pool(&admin, &asset, &500i128);
 
+    // Register a mock contract and authorize it as the borrowing contract.
+    let borrowing_contract = env.register_contract_wasm(None, lending::WASM);
+    client.initialize_borrowing_contract(&asset, &admin, &borrowing_contract);
+
     PoolFixture {
         client,
+        env,
         pool_id: asset,
         lender,
         borrower,
+        borrowing_contract,
     }
+}
+
+/// Helper: call a lending method as the authorized borrowing contract.
+fn as_borrowing<F>(env: &Env, borrowing_contract: &Address, f: F)
+where
+    F: FnOnce(),
+{
+    env.as_contract(borrowing_contract, f);
 }
 
 /// A withdrawal that the lender has the shares for must still be rejected when
@@ -46,8 +64,11 @@ fn withdraw_blocked_when_insufficient_liquidity() {
 
     // Lender supplies 1000; first deposit mints shares 1:1.
     f.client.deposit(&f.pool_id, &f.lender, &1000i128);
-    // Borrower draws 800, leaving 200 of available liquidity.
-    f.client.borrow(&f.pool_id, &f.borrower, &800i128);
+    // Borrower draws 800 through the authorized borrowing contract, leaving 200
+    // of available liquidity.
+    as_borrowing(&env, &f.borrowing_contract, || {
+        f.client.borrow(&f.pool_id, &f.borrower, &800i128);
+    });
 
     let before = f.client.get_pool_accounting(&f.pool_id);
     assert_eq!(before.available_liquidity, 200);
@@ -77,7 +98,9 @@ fn withdraw_succeeds_when_liquidity_sufficient() {
     let f = setup(&env);
 
     f.client.deposit(&f.pool_id, &f.lender, &1000i128);
-    f.client.borrow(&f.pool_id, &f.borrower, &800i128);
+    as_borrowing(&env, &f.borrowing_contract, || {
+        f.client.borrow(&f.pool_id, &f.borrower, &800i128);
+    });
 
     // 150 shares redeem to 150 assets, within the 200 available.
     f.client.withdraw(&f.pool_id, &f.lender, &150i128);
