@@ -2,13 +2,17 @@
 use soroban_sdk::{contract, contractimpl, contracttype, Address, BytesN, Env};
 use shared::errors::Error;
 use shared::events::{
-    InterestAccrued, PoolAccountingUpdated, PoolCreated, PoolDeposit, PoolWithdrawal,
+    BorrowingContractInitialized, InterestAccrued, PoolAccountingUpdated, PoolCreated,
+    PoolDeposit, PoolWithdrawal,
 };
 use shared::types::{
     EmergencyStop, InterestParams, PoolAccounting, PoolConfig, PoolStatus,
     RateLimit, Role, ShareBalance,
 };
 use shared::utils::{FixedMath, SafeMath, TimeHelper, ValidationHelper};
+
+mod authorization;
+mod state;
 
 /// Storage keys for lending contract
 #[derive(Clone)]
@@ -23,6 +27,7 @@ pub enum PoolKey {
     EmergencyStop(BytesN<32>),
     AdminPermissions(Address),
     PoolStatus(BytesN<32>),
+    BorrowingContract(BytesN<32>),
 }
 
 /// Lending contract for managing lending pools and interest.
@@ -346,6 +351,9 @@ impl LendingContract {
         to: Address,
         amount: i128,
     ) -> Result<(), Error> {
+        // Only the authorized borrowing contract may call borrow
+        authorization::require_borrowing_contract(&env, &pool_id)?;
+
         if !ValidationHelper::validate_positive_amount(amount) {
             return Err(Error::InvalidAmount);
         }
@@ -402,7 +410,10 @@ impl LendingContract {
         principal_amount: i128,
         interest_amount: i128,
     ) -> Result<(), Error> {
-        if !ValidationHelper::validate_positive_amount(principal_amount) || 
+        // Only the authorized borrowing contract may call repay
+        authorization::require_borrowing_contract(&env, &pool_id)?;
+
+        if !ValidationHelper::validate_positive_amount(principal_amount) ||
            !ValidationHelper::validate_positive_amount(interest_amount) {
             return Err(Error::InvalidAmount);
         }
@@ -561,6 +572,9 @@ impl LendingContract {
         pool_id: BytesN<32>,
         debt_change: i128,
     ) -> Result<(), Error> {
+        // Only the authorized borrowing contract may call update_debt
+        authorization::require_borrowing_contract(&env, &pool_id)?;
+
         let pool_exists_key = PoolKey::PoolExists(pool_id.clone());
         if !env.storage().persistent().has(&pool_exists_key) {
             return Err(Error::PoolNotFound);
@@ -770,6 +784,68 @@ impl LendingContract {
             .unwrap_or(PoolStatus::Active);
 
         Ok(status)
+    }
+
+    /// Initialize the authorized borrowing contract for a pool.
+    ///
+    /// Once set, the borrowing contract address is immutable.  This must be
+    /// called before any `borrow` or `repay` operations can be performed on
+    /// the pool.
+    pub fn initialize_borrowing_contract(
+        env: Env,
+        pool_id: BytesN<32>,
+        admin: Address,
+        borrowing_contract: Address,
+    ) -> Result<(), Error> {
+        // Verify the pool exists
+        let pool_exists_key = PoolKey::PoolExists(pool_id.clone());
+        if !env.storage().persistent().has(&pool_exists_key) {
+            return Err(Error::PoolNotFound);
+        }
+
+        // Verify the caller is the pool admin
+        let config: PoolConfig = env
+            .storage()
+            .persistent()
+            .get(&PoolKey::Pool(pool_id.clone()))
+            .ok_or(Error::PoolNotFound)?;
+        if config.admin != admin {
+            return Err(Error::Unauthorized);
+        }
+
+        // Check if already initialized (immutable after init)
+        let key = PoolKey::BorrowingContract(pool_id.clone());
+        if env.storage().persistent().has(&key) {
+            return Err(Error::AlreadyInitialized);
+        }
+
+        // Store the borrowing contract address
+        env.storage().persistent().set(&key, &borrowing_contract);
+
+        // Emit event
+        env.events()
+            .publish(
+                (BorrowingContractInitialized::topic(&env), pool_id.clone()),
+                BorrowingContractInitialized {
+                    pool_id,
+                    borrowing_contract,
+                    initialized_at: TimeHelper::now(&env),
+                },
+            );
+
+        Ok(())
+    }
+
+    /// Get the configured borrowing contract address for a pool.
+    pub fn get_borrowing_contract(
+        env: Env,
+        pool_id: BytesN<32>,
+    ) -> Result<Address, Error> {
+        let key = PoolKey::BorrowingContract(pool_id);
+        env.storage()
+            .persistent()
+            .get(&key)
+            .ok_or(Error::Unauthorized)
     }
 
     fn storage_key(env: &Env, label: &[u8]) -> BytesN<32> {

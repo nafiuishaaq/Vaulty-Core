@@ -349,6 +349,25 @@ impl PoolAccountingUpdated {
         )
     }
 }
+
+/// Event emitted when a borrowing contract is initialized for a lending pool
+#[contracttype]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BorrowingContractInitialized {
+    pub pool_id: BytesN<32>,
+    pub borrowing_contract: Address,
+    pub initialized_at: u64,
+}
+
+impl BorrowingContractInitialized {
+    pub fn topic(env: &Env) -> (BytesN<32>, BytesN<32>) {
+        (
+            BytesN::from_array(env, &[50u8; 32]),
+            BytesN::from_array(env, &[51u8; 32]),
+        )
+    }
+}
+
 /// Event emitted when the rewards pool is funded
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RewardsPoolFunded {

@@ -165,6 +165,33 @@ Manages decentralized lending pools with advanced controls.
 * Admin permission system
 * Interest index tracking
 * Liquidity protection
+* **Borrowing-contract authorization** — `borrow`, `repay`, and `update_debt`
+  are restricted to a single, immutable borrowing-contract address per pool.
+
+### Initialization Order (Lending ↔ Borrowing)
+
+The lending and borrowing contracts must be initialized in a specific order to
+ensure that borrowing-contract authorization is in place before any loan
+operations occur.
+
+```text
+1. Deploy the lending contract.
+2. Deploy the borrowing contract.
+3. Create a lending pool via `LendingContract::create_pool`.
+4. The pool admin calls `LendingContract::initialize_borrowing_contract`
+   to bind the pool to the borrowing contract address.
+   ⚠  This operation is one-time and irreversible — the configured address
+      cannot be changed without a contract upgrade.
+5. The pool admin configures the lending pool address inside the borrowing
+   contract (borrowing-contract side).
+6. Suppliers call `LendingContract::deposit` to add liquidity.
+7. Borrowers request loans through the borrowing contract, which internally
+   calls `borrow` and `repay` on the lending contract.
+```
+
+> **Security note:** `initialize_borrowing_contract` does **not** replace
+> borrower-level authorization inside the borrowing contract. Both contracts
+> enforce their own access-control checks independently.
 
 ---
 
