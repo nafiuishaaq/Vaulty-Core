@@ -3,7 +3,7 @@ extern crate std;
 
 use soroban_sdk::{
     testutils::{Address as _, Ledger, LedgerInfo},
-    Env,
+    Address, Env,
 };
 use streaks::{StreaksContract, StreaksContractClient};
 
@@ -13,9 +13,10 @@ fn setup() -> (Env, Address, Address) {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register_contract(None, StreaksContract);
     let vault = Address::generate(&env);
-    StreaksContractClient::new(&env, &contract_id).initialize(&vault);
+    let contract_id = env.register_contract(None, StreaksContract);
+    let client = StreaksContractClient::new(&env, &contract_id);
+    client.initialize(&vault);
 
     let user = Address::generate(&env);
     (env, contract_id, user)

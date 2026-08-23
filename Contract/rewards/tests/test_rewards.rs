@@ -1,31 +1,19 @@
-use soroban_sdk::{Address, BytesN, Env};
-use shared::types::Asset;
-use rewards::RewardsContract;
 #![cfg(test)]
 extern crate std;
 
 use soroban_sdk::{
-    testutils::{Address, Ledger},
-    BytesN, Env,
+    testutils::{Address as _, Ledger},
+    Address, BytesN, Env,
 };
-use rewards::RewardsContractClient;
-use shared::types::UserReward;
-
-const WASM: &[u8] = rewards::WASM;
+use rewards::{RewardsContract, RewardsContractClient};
 
 #[test]
 fn test_rewards_pool_initialization() {
     let env = Env::default();
-    let contract_id = env.register_contract(None, RewardsContract);
-    let asset = Asset {
-        token: Address::generate(&env),
-        symbol: BytesN::from_array(&env, &[0u8; 32]),
-    };
-    RewardsContract::initialize_rewards(&env, &contract_id, &1000i128, &asset);
     let admin = Address::generate(&env);
     let streaks_id = Address::generate(&env);
-    let contract_id = env.register_contract_wasm(None, rewards::WASM);
-    let mut client = RewardsContractClient::new(&env, &contract_id);
+    let contract_id = env.register_contract(None, RewardsContract);
+    let client = RewardsContractClient::new(&env, &contract_id);
 
     // Initialize rewards pool
     let reward_asset: BytesN<32> = BytesN::from_array(&env, &[0u8; 32]);
@@ -46,8 +34,8 @@ fn test_milestone_7day_grant() {
     let admin = Address::generate(&env);
     let streaks_id = Address::generate(&env);
     let user = Address::generate(&env);
-    let contract_id = env.register_contract_wasm(None, rewards::WASM);
-    let mut client = RewardsContractClient::new(&env, &contract_id);
+    let contract_id = env.register_contract(None, RewardsContract);
+    let client = RewardsContractClient::new(&env, &contract_id);
 
     let reward_asset: BytesN<32> = BytesN::from_array(&env, &[0u8; 32]);
     client.initialize(&admin, &reward_asset, &streaks_id);
@@ -67,8 +55,8 @@ fn test_multiple_milestones() {
     let admin = Address::generate(&env);
     let streaks_id = Address::generate(&env);
     let user = Address::generate(&env);
-    let contract_id = env.register_contract_wasm(None, rewards::WASM);
-    let mut client = RewardsContractClient::new(&env, &contract_id);
+    let contract_id = env.register_contract(None, RewardsContract);
+    let client = RewardsContractClient::new(&env, &contract_id);
 
     let reward_asset: BytesN<32> = BytesN::from_array(&env, &[0u8; 32]);
     client.initialize(&admin, &reward_asset, &streaks_id);
@@ -98,8 +86,8 @@ fn test_claim_rewards() {
     let admin = Address::generate(&env);
     let streaks_id = Address::generate(&env);
     let user = Address::generate(&env);
-    let contract_id = env.register_contract_wasm(None, rewards::WASM);
-    let mut client = RewardsContractClient::new(&env, &contract_id);
+    let contract_id = env.register_contract(None, RewardsContract);
+    let client = RewardsContractClient::new(&env, &contract_id);
 
     let reward_asset: BytesN<32> = BytesN::from_array(&env, &[0u8; 32]);
     client.initialize(&admin, &reward_asset, &streaks_id);
@@ -130,8 +118,8 @@ fn test_double_claim_prevention() {
     let admin = Address::generate(&env);
     let streaks_id = Address::generate(&env);
     let user = Address::generate(&env);
-    let contract_id = env.register_contract_wasm(None, rewards::WASM);
-    let mut client = RewardsContractClient::new(&env, &contract_id);
+    let contract_id = env.register_contract(None, RewardsContract);
+    let client = RewardsContractClient::new(&env, &contract_id);
 
     let reward_asset: BytesN<32> = BytesN::from_array(&env, &[0u8; 32]);
     client.initialize(&admin, &reward_asset, &streaks_id);
@@ -154,7 +142,7 @@ fn test_add_custom_milestone() {
     let env = Env::default();
     let admin = Address::generate(&env);
     let streaks_id = Address::generate(&env);
-    let contract_id = env.register_contract_wasm(None, rewards::WASM);
+    let contract_id = env.register_contract(None, RewardsContract);
     let mut client = RewardsContractClient::new(&env, &contract_id);
 
     let reward_asset: BytesN<32> = BytesN::from_array(&env, &[0u8; 32]);
@@ -180,8 +168,8 @@ fn test_insufficient_liquidity() {
     let streaks_id = Address::generate(&env);
     let user1 = Address::generate(&env);
     let user2 = Address::generate(&env);
-    let contract_id = env.register_contract_wasm(None, rewards::WASM);
-    let mut client = RewardsContractClient::new(&env, &contract_id);
+    let contract_id = env.register_contract(None, RewardsContract);
+    let client = RewardsContractClient::new(&env, &contract_id);
 
     let reward_asset: BytesN<32> = BytesN::from_array(&env, &[0u8; 32]);
     client.initialize(&admin, &reward_asset, &streaks_id);

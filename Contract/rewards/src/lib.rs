@@ -16,9 +16,6 @@ use shared::{
 #[contract]
 pub struct RewardsContract;
 
-#[cfg(test)]
-pub use RewardsContract;
-
 /// Storage keys for rewards contract
 #[derive(Clone)]
 #[contracttype]

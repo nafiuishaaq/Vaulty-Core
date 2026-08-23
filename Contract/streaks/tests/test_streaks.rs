@@ -3,10 +3,9 @@ extern crate std;
 
 use soroban_sdk::{
     testutils::{Address as _, Ledger, LedgerInfo},
-    Env,
+    Address, Env,
 };
-use streaks::StreaksContractClient;
-use shared::types::UserStreak;
+use streaks::{StreaksContract, StreaksContractClient};
 
 #[test]
 fn test_streak_initialization() {
@@ -14,7 +13,7 @@ fn test_streak_initialization() {
     env.mock_all_auths();
 
     let vault_id = Address::generate(&env);
-    let contract_id = env.register_contract_wasm(None, streaks::WASM);
+    let contract_id = env.register_contract(None, StreaksContract);
     let client = StreaksContractClient::new(&env, &contract_id);
 
     // Initialize with vault as authorized caller
@@ -37,7 +36,7 @@ fn test_consecutive_day_streak_increment() {
     env.mock_all_auths();
 
     let vault_id = Address::generate(&env);
-    let contract_id = env.register_contract_wasm(None, streaks::WASM);
+    let contract_id = env.register_contract(None, StreaksContract);
     let client = StreaksContractClient::new(&env, &contract_id);
 
     client.initialize(&vault_id);
@@ -76,7 +75,7 @@ fn test_same_day_duplicate_prevention() {
     env.mock_all_auths();
 
     let vault_id = Address::generate(&env);
-    let contract_id = env.register_contract_wasm(None, streaks::WASM);
+    let contract_id = env.register_contract(None, StreaksContract);
     let client = StreaksContractClient::new(&env, &contract_id);
 
     client.initialize(&vault_id);
@@ -100,7 +99,7 @@ fn test_one_day_missed_uses_freeze() {
     env.mock_all_auths();
 
     let vault_id = Address::generate(&env);
-    let contract_id = env.register_contract_wasm(None, streaks::WASM);
+    let contract_id = env.register_contract(None, StreaksContract);
     let client = StreaksContractClient::new(&env, &contract_id);
 
     client.initialize(&vault_id);
@@ -134,7 +133,7 @@ fn test_two_days_missed_resets_streak() {
     env.mock_all_auths();
 
     let vault_id = Address::generate(&env);
-    let contract_id = env.register_contract_wasm(None, streaks::WASM);
+    let contract_id = env.register_contract(None, StreaksContract);
     let client = StreaksContractClient::new(&env, &contract_id);
 
     client.initialize(&vault_id);
@@ -165,7 +164,7 @@ fn test_manual_freeze_usage() {
     env.mock_all_auths();
 
     let vault_id = Address::generate(&env);
-    let contract_id = env.register_contract_wasm(None, streaks::WASM);
+    let contract_id = env.register_contract(None, StreaksContract);
     let client = StreaksContractClient::new(&env, &contract_id);
 
     client.initialize(&vault_id);
@@ -187,7 +186,7 @@ fn test_no_freezes_left() {
     env.mock_all_auths();
 
     let vault_id = Address::generate(&env);
-    let contract_id = env.register_contract_wasm(None, streaks::WASM);
+    let contract_id = env.register_contract(None, StreaksContract);
     let client = StreaksContractClient::new(&env, &contract_id);
 
     client.initialize(&vault_id);
@@ -211,7 +210,7 @@ fn test_add_freezes_authorized() {
     env.mock_all_auths();
 
     let vault_id = Address::generate(&env);
-    let contract_id = env.register_contract_wasm(None, streaks::WASM);
+    let contract_id = env.register_contract(None, StreaksContract);
     let client = StreaksContractClient::new(&env, &contract_id);
 
     client.initialize(&vault_id);
@@ -230,7 +229,7 @@ fn test_streak_active_check() {
     env.mock_all_auths();
 
     let vault_id = Address::generate(&env);
-    let contract_id = env.register_contract_wasm(None, streaks::WASM);
+    let contract_id = env.register_contract(None, StreaksContract);
     let client = StreaksContractClient::new(&env, &contract_id);
 
     client.initialize(&vault_id);
@@ -265,7 +264,7 @@ fn test_activity_history_stored() {
     env.mock_all_auths();
 
     let vault_id = Address::generate(&env);
-    let contract_id = env.register_contract_wasm(None, streaks::WASM);
+    let contract_id = env.register_contract(None, StreaksContract);
     let client = StreaksContractClient::new(&env, &contract_id);
 
     client.initialize(&vault_id);

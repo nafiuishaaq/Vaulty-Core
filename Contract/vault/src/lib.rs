@@ -20,9 +20,6 @@ pub use state::{VaultConfig, VaultId, VaultKey};
 #[contract]
 pub struct VaultContract;
 
-#[cfg(test)]
-pub use VaultContract;
-
 /// Storage keys - initialized at runtime
 fn vaults_key(env: &Env) -> BytesN<32> {
     BytesN::from_array(env, &[0u8; 32])
