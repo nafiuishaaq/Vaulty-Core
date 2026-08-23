@@ -13,6 +13,7 @@ use shared::utils::{FixedMath, SafeMath, TimeHelper, ValidationHelper};
 
 mod authorization;
 mod state;
+mod token;
 
 /// Storage keys for lending contract
 #[derive(Clone)]
@@ -372,10 +373,14 @@ impl LendingContract {
             .get(&PoolKey::Accounting(pool_id.clone()))
             .ok_or(Error::PoolNotFound)?;
 
-        // Check if sufficient liquidity is available
-        if accounting.available_liquidity < amount {
-            return Err(Error::InsufficientLiquidity);
-        }
+        let config: PoolConfig = env
+            .storage()
+            .persistent()
+            .get(&PoolKey::Pool(pool_id.clone()))
+            .ok_or(Error::PoolNotFound)?;
+
+        // Transfer tokens to the borrower
+        Self::transfer_to_borrower(&env, &config.asset, &to, &amount)?;
 
         // Update accounting
         accounting.available_liquidity = accounting
@@ -390,14 +395,6 @@ impl LendingContract {
         env.storage()
             .persistent()
             .set(&PoolKey::Accounting(pool_id.clone()), &accounting);
-
-        // In a real implementation, we would transfer tokens from pool to borrower
-        // This assumes the token contract handles the transfer
-        let config: PoolConfig = env
-            .storage()
-            .persistent()
-            .get(&PoolKey::Pool(pool_id.clone()))
-            .ok_or(Error::PoolNotFound)?;
 
         Ok(())
     }
@@ -435,6 +432,15 @@ impl LendingContract {
         let total_payment = SafeMath::add(principal_amount, interest_amount)
             .ok_or(Error::Overflow)?;
 
+        let config: PoolConfig = env
+            .storage()
+            .persistent()
+            .get(&PoolKey::Pool(pool_id.clone()))
+            .ok_or(Error::PoolNotFound)?;
+
+        // Transfer tokens from the payer to the contract
+        Self::transfer_from_payer(&env, &config.asset, &from, &total_payment)?;
+
         // Update accounting
         accounting.available_liquidity = accounting
             .available_liquidity
@@ -452,8 +458,6 @@ impl LendingContract {
         env.storage()
             .persistent()
             .set(&PoolKey::Accounting(pool_id.clone()), &accounting);
-
-        // In a real implementation, we would transfer tokens from borrower to pool
         Ok(())
     }
 
