@@ -3,7 +3,7 @@ extern crate std;
 
 use soroban_sdk::{
     testutils::{Address as _, Ledger, LedgerInfo},
-    Env,
+    Address, Env,
 };
 use streaks::StreaksContractClient;
 use shared::types::UserStreak;

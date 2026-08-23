@@ -16,9 +16,6 @@ use shared::{
 #[contract]
 pub struct RewardsContract;
 
-#[cfg(test)]
-pub use RewardsContract;
-
 /// Storage keys for rewards contract
 #[derive(Clone)]
 #[contracttype]
@@ -497,3 +494,6 @@ impl RewardsContract {
         env.storage().persistent().set(&key, &rewards);
     }
 }
+
+#[cfg(test)]
+pub const WASM: &[u8] = include_bytes!("../../../target/wasm32-unknown-unknown/release/rewards.wasm");

@@ -1,11 +1,8 @@
-use soroban_sdk::{Address, BytesN, Env};
-use shared::types::Asset;
-use rewards::RewardsContract;
 #![cfg(test)]
 extern crate std;
 
 use soroban_sdk::{
-    testutils::{Address, Ledger},
+    testutils::{Address as _, Ledger},
     BytesN, Env,
 };
 use rewards::RewardsContractClient;
