@@ -6,7 +6,7 @@ use soroban_sdk::{
 use vault::{VaultContract, VaultContractClient, VaultId};
 
 #[contracttype]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum TokenError {
     InsufficientBalance = 1,
     InvalidAmount = 4,

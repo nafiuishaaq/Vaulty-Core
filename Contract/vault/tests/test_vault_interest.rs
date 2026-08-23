@@ -1,15 +1,15 @@
 use soroban_sdk::{
     contract, contractimpl, contracttype,
-    testutils::{Address as _, Ledger},
+    testutils::{Address as _, Ledger, LedgerInfo},
     Address, BytesN, Env, Map,
 };
 use vault::{
     interest::{calculate_interest, SECONDS_PER_YEAR},
-    VaultContract, VaultContractClient, VaultId,
+    VaultContract, VaultContractClient,
 };
 
 #[contracttype]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum TokenError {
     InsufficientBalance = 1,
     InvalidAmount = 4,
@@ -74,7 +74,7 @@ fn setup() -> (Env, Address, Address, BytesN<32>, Address) {
     let env = Env::default();
     env.mock_all_auths();
 
-    env.ledger().set(soroban_sdk::LedgerInfo {
+    env.ledger().set(LedgerInfo {
         timestamp: 1000,
         protocol_version: 20,
         sequence_number: 1,
@@ -94,7 +94,7 @@ fn setup() -> (Env, Address, Address, BytesN<32>, Address) {
 }
 
 fn set_ledger_time(env: &Env, timestamp: u64) {
-    env.ledger().set(soroban_sdk::LedgerInfo {
+    env.ledger().set(LedgerInfo {
         timestamp,
         protocol_version: 20,
         sequence_number: 1234,

@@ -39,7 +39,8 @@ fn setup_integration_test() -> (Env, Address, Address, VaultContractClient, Stre
     vault.register_with_streaks();
 
     // Fund the rewards pool as admin
-    rewards.require_auth_for_args(&admin, &()).fund_rewards_pool(&10000_0000000);
+    admin.require_auth();
+    rewards.fund_rewards_pool(&10000_0000000);
 
     (env, admin, user, vault, streaks, rewards)
 }
@@ -53,9 +54,9 @@ fn test_full_progression_flow() {
     let token_issuer = Address::generate(&env);
     let vault_id_val = vault.create_vault(
         &user,
+        &token_issuer,
         &asset_code,
-        Some(token_issuer),
-        86400, // 1 day lock
+        &86400, // 1 day lock
     );
 
     // DAY 1: First deposit creates streak
@@ -137,7 +138,7 @@ fn test_double_claim_prevention() {
     // Create user vault
     let asset_code: BytesN<32> = BytesN::from_array(&env, &[1u8; 32]);
     let token_issuer = Address::generate(&env);
-    let vault_id_val = vault.create_vault(&user, &asset_code, Some(token_issuer), 86400);
+    let vault_id_val = vault.create_vault(&user, &token_issuer, &asset_code, &86400);
 
     // Reach 7-day milestone
     for day in 1..=7 {
@@ -162,9 +163,9 @@ fn test_qualifying_deposit_updates_streak_once() {
     let token_issuer = Address::generate(&env);
     let vault_id_val = vault.create_vault(
         &user,
+        &token_issuer,
         &asset_code,
-        Some(token_issuer),
-        86400, // 1 day lock
+        &86400, // 1 day lock
     );
 
     // Set timestamp to day 1
@@ -191,9 +192,9 @@ fn test_same_day_second_deposit_does_not_add_streak() {
     let token_issuer = Address::generate(&env);
     let vault_id_val = vault.create_vault(
         &user,
+        &token_issuer,
         &asset_code,
-        Some(token_issuer),
-        86400, // 1 day lock
+        &86400, // 1 day lock
     );
 
     // Set timestamp to day 1
@@ -231,9 +232,9 @@ fn test_milestone_deposit_creates_pending_reward() {
     let token_issuer = Address::generate(&env);
     let vault_id_val = vault.create_vault(
         &user,
+        &token_issuer,
         &asset_code,
-        Some(token_issuer),
-        86400, // 1 day lock
+        &86400, // 1 day lock
     );
 
     // Make deposits for 7 consecutive days to reach 7-day milestone
@@ -265,9 +266,9 @@ fn test_failed_streak_call_does_not_corrupt_vault_state() {
     let token_issuer = Address::generate(&env);
     let vault_id_val = vault.create_vault(
         &user,
+        &token_issuer,
         &asset_code,
-        Some(token_issuer),
-        86400, // 1 day lock
+        &86400, // 1 day lock
     );
 
     // Set timestamp to day 1
@@ -301,7 +302,7 @@ fn test_failed_streak_call_does_not_corrupt_vault_state() {
     // Verify vault metadata is intact
     let vault_metadata = vault.get_vault(&vault_id_val);
     assert_eq!(vault_metadata.owner, user);
-    assert_eq!(vault_metadata.status, 1); // Locked status
+    assert_eq!(vault_metadata.status, shared::types::VaultStatus::Locked);
 }
 
 #[test]
@@ -313,9 +314,9 @@ fn test_failed_reward_call_does_not_corrupt_vault_state() {
     let token_issuer = Address::generate(&env);
     let vault_id_val = vault.create_vault(
         &user,
+        &token_issuer,
         &asset_code,
-        Some(token_issuer),
-        86400, // 1 day lock
+        &86400, // 1 day lock
     );
 
     // Empty the rewards pool to simulate liquidity failure
@@ -351,5 +352,5 @@ fn test_failed_reward_call_does_not_corrupt_vault_state() {
     // Verify vault metadata is intact
     let vault_metadata = vault.get_vault(&vault_id_val);
     assert_eq!(vault_metadata.owner, user);
-    assert_eq!(vault_metadata.status, 1); // Locked status
+    assert_eq!(vault_metadata.status, shared::types::VaultStatus::Locked);
 }

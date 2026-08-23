@@ -17,6 +17,8 @@ use crate::leaderboard::Leaderboard;
 use crate::state::{State, INITIAL_FREEZES};
 use crate::ttl::Ttl;
 
+pub use crate::state::StreakKey;
+
 /// Streak state machine for vault-integrated daily activity tracking.
 ///
 /// This contract exposes exactly one authorized implementation for each streak

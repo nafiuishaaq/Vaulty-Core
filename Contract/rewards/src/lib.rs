@@ -494,6 +494,3 @@ impl RewardsContract {
         env.storage().persistent().set(&key, &rewards);
     }
 }
-
-#[cfg(test)]
-pub const WASM: &[u8] = include_bytes!("../../../target/wasm32-unknown-unknown/release/rewards.wasm");

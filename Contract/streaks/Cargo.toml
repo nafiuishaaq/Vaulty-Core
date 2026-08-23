@@ -3,9 +3,13 @@ name = "streaks"
 version.workspace = true
 edition.workspace = true
 
+[features]
+testutils = ["soroban-sdk/testutils"]
+
 [dependencies]
 soroban-sdk.workspace = true
 shared.workspace = true
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
+streaks = { path = ".", features = ["testutils"] }
