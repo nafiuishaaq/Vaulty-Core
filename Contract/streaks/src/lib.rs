@@ -14,7 +14,7 @@ use crate::activity::Activity;
 use crate::authorization::Authorization;
 use crate::events::Events;
 use crate::leaderboard::Leaderboard;
-use crate::state::{State, INITIAL_FREEZES};
+use crate::state::{State, INITIAL_FREEZES, MAX_FREEZES};
 use crate::ttl::Ttl;
 
 pub use crate::state::StreakKey;
@@ -223,7 +223,7 @@ impl StreaksContract {
         Ok(())
     }
 
-    /// Add freezes to a user's account.
+    /// Add freezes to a user's account, up to the configured `MAX_FREEZES` cap.
     ///
     /// # Authorization
     /// Requires vault authorization.
@@ -232,16 +232,24 @@ impl StreaksContract {
     /// - `Error::NotInitialized` if the contract has not been initialized.
     /// - `Error::Unauthorized` if the caller is not authorized.
     /// - `Error::StreakNotFound` if the user has no streak.
+    /// - `Error::InvalidAmount` if the addition would push the user's freeze
+    ///   balance above `MAX_FREEZES`.
     pub fn add_freezes(env: Env, user: Address, amount: u32) -> Result<(), Error> {
         Authorization::require_vault_authorization(&env)?;
         Authorization::ensure_initialized(&env)?;
 
         let mut streak = State::get_streak(&env, &user)?;
 
-        streak.available_freezes = streak
+        let new_total = streak
             .available_freezes
             .checked_add(amount)
             .ok_or(Error::Overflow)?;
+
+        if new_total > MAX_FREEZES {
+            return Err(Error::InvalidAmount);
+        }
+
+        streak.available_freezes = new_total;
 
         State::set_streak(&env, &user, &streak)?;
 
