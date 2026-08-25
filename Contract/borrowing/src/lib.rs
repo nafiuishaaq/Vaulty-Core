@@ -1,7 +1,10 @@
 #![no_std]
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Bytes, BytesN, Env, Vec, Map, Symbol, IntoVal, Val};
 use shared::errors::Error;
-use shared::events::{LoanIssued, LoanRepaid, CollateralLocked, CollateralReleased};
+use shared::events::{
+    AdminTransferPending, AdminTransferred, ContractInitialized,
+    LoanIssued, LoanRepaid, CollateralLocked, CollateralReleased,
+};
 use shared::types::{CollateralConfig, LoanInfo, LoanStatus, PoolAccounting};
 use shared::utils::{SafeMath, TimeHelper, ValidationHelper};
 
@@ -17,6 +20,8 @@ pub enum BorrowingKey {
     LendingPoolAddress,
     VaultContractAddress,
     CollateralLocked(BytesN<32>), // Track if collateral is locked for a loan
+    ContractAdmin,
+    PendingAdmin,
 }
 
 // Collateral ratio constant (150% = 15000 basis points)
@@ -28,9 +33,15 @@ pub struct BorrowingContract;
 
 #[contractimpl]
 impl BorrowingContract {
-    /// Initialize the borrowing contract with dependent contract addresses
+    /// Initialize the borrowing contract with an administrator and dependent contract addresses.
+    ///
+    /// Can only be called once. The caller becomes the contract administrator.
+    ///
+    /// # Auth
+    /// Requires authorization from the deployer (initial admin).
     pub fn initialize(
         env: Env,
+        admin: Address,
         lending_pool_address: Address,
         vault_contract_address: Address,
     ) -> Result<(), Error> {
@@ -39,13 +50,100 @@ impl BorrowingContract {
             return Err(Error::AlreadyInitialized);
         }
 
+        admin.require_auth();
+
+        env.storage().persistent().set(&BorrowingKey::ContractAdmin, &admin);
         env.storage().persistent().set(&BorrowingKey::LendingPoolAddress, &lending_pool_address);
         env.storage().persistent().set(&BorrowingKey::VaultContractAddress, &vault_contract_address);
+
+        env.events().publish(
+            ContractInitialized::topic(&env),
+            ContractInitialized {
+                admin,
+                timestamp: shared::utils::TimeHelper::now(&env),
+            },
+        );
+
+        Ok(())
+    }
+
+    /// Get the current contract administrator
+    pub fn get_contract_admin(env: Env) -> Result<Address, Error> {
+        env.storage()
+            .persistent()
+            .get(&BorrowingKey::ContractAdmin)
+            .ok_or(Error::NotInitialized)
+    }
+
+    /// Initiate a two-step administrator transfer.
+    ///
+    /// # Auth
+    /// Requires authorization from the current administrator.
+    pub fn transfer_admin(env: Env, proposed_admin: Address) -> Result<(), Error> {
+        let current_admin: Address = env
+            .storage()
+            .persistent()
+            .get(&BorrowingKey::ContractAdmin)
+            .ok_or(Error::NotInitialized)?;
+        current_admin.require_auth();
+
+        if current_admin == proposed_admin {
+            return Err(Error::CannotTransferToSelf);
+        }
+
+        env.storage()
+            .persistent()
+            .set(&BorrowingKey::PendingAdmin, &proposed_admin);
+
+        env.events().publish(
+            AdminTransferPending::topic(&env),
+            AdminTransferPending {
+                current_admin,
+                proposed_admin,
+                timestamp: shared::utils::TimeHelper::now(&env),
+            },
+        );
+
+        Ok(())
+    }
+
+    /// Accept an administrator transfer.
+    ///
+    /// # Auth
+    /// Requires authorization from the proposed administrator.
+    pub fn accept_admin(env: Env) -> Result<(), Error> {
+        let proposed_admin: Address = env
+            .storage()
+            .persistent()
+            .get(&BorrowingKey::PendingAdmin)
+            .ok_or(Error::NoAdminTransferPending)?;
+        proposed_admin.require_auth();
+
+        let previous_admin: Address = env
+            .storage()
+            .persistent()
+            .get(&BorrowingKey::ContractAdmin)
+            .ok_or(Error::NotInitialized)?;
+
+        env.storage().persistent().set(&BorrowingKey::ContractAdmin, &proposed_admin);
+        env.storage().persistent().remove(&BorrowingKey::PendingAdmin);
+
+        env.events().publish(
+            AdminTransferred::topic(&env),
+            AdminTransferred {
+                previous_admin,
+                new_admin: proposed_admin,
+                timestamp: shared::utils::TimeHelper::now(&env),
+            },
+        );
 
         Ok(())
     }
 
     /// Configure collateral parameters for an asset
+    ///
+    /// # Auth
+    /// Requires authorization from the contract administrator.
     pub fn configure_collateral(
         env: Env,
         asset: BytesN<32>,
@@ -53,6 +151,14 @@ impl BorrowingContract {
         loan_to_value: i128,
         safety_factor: i128,
     ) -> Result<(), Error> {
+        // Require contract administrator authorization
+        let contract_admin: Address = env
+            .storage()
+            .persistent()
+            .get(&BorrowingKey::ContractAdmin)
+            .ok_or(Error::NotInitialized)?;
+        contract_admin.require_auth();
+
         if !ValidationHelper::validate_interest_rate(liquidation_threshold) {
             return Err(Error::InvalidParameters);
         }

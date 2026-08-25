@@ -15,6 +15,7 @@ pub enum VaultKey {
     UserVaults(Address),
     VaultInterest(VaultId),
     LastAccrual(VaultId),
+    PendingAdmin,
 }
 
 /// Configuration settings for the vault contract

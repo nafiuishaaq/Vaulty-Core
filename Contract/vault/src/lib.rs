@@ -8,7 +8,7 @@ use soroban_sdk::{
 };
 use shared::{
     errors::Error,
-    events::{DepositMade, VaultCreated, VaultUnlocked, WithdrawalCompleted},
+    events::{AdminTransferPending, AdminTransferred, ContractInitialized, DepositMade, VaultCreated, VaultUnlocked, WithdrawalCompleted},
     storage::StorageHelper,
     types::{Asset, EmergencyStop, RateLimit, VaultMetadata, VaultStatus},
     utils::{SafeMath, TimeHelper, ValidationHelper},
@@ -39,19 +39,46 @@ fn rewards_contract_key(env: &Env) -> BytesN<32> {
 
 #[contractimpl]
 impl VaultContract {
-    /// Initialize the vault contract with linked streaks and rewards contracts
-    /// Can only be called once
-    pub fn initialize(env: Env, streaks_contract: Address, rewards_contract: Address) {
+    /// Initialize the vault contract with an administrator and linked contracts.
+    ///
+    /// Can only be called once. The caller becomes the initial administrator.
+    /// All mutable protocol configuration requires administrator authorization.
+    ///
+    /// # Auth
+    /// Requires authorization from the deployer (initial admin).
+    pub fn initialize(
+        env: Env,
+        admin: Address,
+        streaks_contract: Address,
+        rewards_contract: Address,
+    ) -> Result<(), Error> {
         // Check if already initialized
         let streaks_key = streaks_contract_key(&env);
         if env.storage().instance().has(&streaks_key) {
-            panic!("{:?}", Error::AlreadyInitialized);
+            return Err(Error::AlreadyInitialized);
         }
+
+        // Require admin authorization for initialization
+        admin.require_auth();
+
+        // Store the administrator
+        env.storage().persistent().set(&VaultKey::Admin, &admin);
 
         // Store the contract addresses
         env.storage().instance().set(&streaks_key, &streaks_contract);
         let rewards_key = rewards_contract_key(&env);
         env.storage().instance().set(&rewards_key, &rewards_contract);
+
+        // Emit governance event
+        env.events().publish(
+            ContractInitialized::topic(&env),
+            ContractInitialized {
+                admin,
+                timestamp: TimeHelper::now(&env),
+            },
+        );
+
+        Ok(())
     }
 
     /// Add streaks contract as an authorized caller in the streaks contract
@@ -618,6 +645,87 @@ impl VaultContract {
             .unwrap_or_default();
         StorageHelper::touch_vault(&env, &VaultKey::VaultConfig);
         Ok(config)
+    }
+
+    /// Get the current administrator address
+    pub fn get_admin(env: Env) -> Result<Address, Error> {
+        let admin: Address = env
+            .storage()
+            .persistent()
+            .get(&VaultKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        Ok(admin)
+    }
+
+    /// Initiate a two-step administrator transfer.
+    ///
+    /// Stores the proposed new admin. The transfer must be completed by the
+    /// proposed admin calling `accept_admin`.
+    ///
+    /// # Auth
+    /// Requires authorization from the current administrator.
+    pub fn transfer_admin(env: Env, proposed_admin: Address) -> Result<(), Error> {
+        let current_admin: Address = env
+            .storage()
+            .persistent()
+            .get(&VaultKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        current_admin.require_auth();
+
+        if current_admin == proposed_admin {
+            return Err(Error::CannotTransferToSelf);
+        }
+
+        env.storage()
+            .persistent()
+            .set(&VaultKey::PendingAdmin, &proposed_admin);
+
+        env.events().publish(
+            AdminTransferPending::topic(&env),
+            AdminTransferPending {
+                current_admin,
+                proposed_admin,
+                timestamp: TimeHelper::now(&env),
+            },
+        );
+
+        Ok(())
+    }
+
+    /// Accept an administrator transfer.
+    ///
+    /// Must be called by the proposed administrator to complete the
+    /// two-step admin rotation.
+    ///
+    /// # Auth
+    /// Requires authorization from the proposed administrator.
+    pub fn accept_admin(env: Env) -> Result<(), Error> {
+        let proposed_admin: Address = env
+            .storage()
+            .persistent()
+            .get(&VaultKey::PendingAdmin)
+            .ok_or(Error::NoAdminTransferPending)?;
+        proposed_admin.require_auth();
+
+        let previous_admin: Address = env
+            .storage()
+            .persistent()
+            .get(&VaultKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+
+        env.storage().persistent().set(&VaultKey::Admin, &proposed_admin);
+        env.storage().persistent().remove(&VaultKey::PendingAdmin);
+
+        env.events().publish(
+            AdminTransferred::topic(&env),
+            AdminTransferred {
+                previous_admin,
+                new_admin: proposed_admin,
+                timestamp: TimeHelper::now(&env),
+            },
+        );
+
+        Ok(())
     }
 
     fn store_vault_metadata(
