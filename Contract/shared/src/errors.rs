@@ -55,5 +55,8 @@ pub enum Error {
     UnauthorizedAdmin = 48,
     RewardNotEligible = 49,
     VaultAlreadyUnlocked = 50,
+    AdminTransferPending = 51,
+    NoAdminTransferPending = 52,
+    CannotTransferToSelf = 53,
 }
 
