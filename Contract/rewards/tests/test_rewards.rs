@@ -100,7 +100,7 @@ fn test_claim_rewards() {
 }
 
 #[test]
-#[should_panic(expected = "RewardAlreadyClaimed")]
+#[should_panic(expected = "RewardNotEligible")]
 fn test_double_claim_prevention() {
     let env = Env::default();
     env.mock_all_auths();

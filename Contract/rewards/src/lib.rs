@@ -82,6 +82,10 @@ impl RewardsContract {
             .persistent()
             .set(&RewardsKey::RewardPool, &reward_pool);
 
+        // Mark initialized in instance storage so double-init is detected
+        let pool_key = BytesN::from_array(&env, REWARDS_POOL_KEY);
+        env.storage().instance().set(&pool_key, &reward_pool);
+
         env.events().publish(
             ContractInitialized::topic(&env),
             ContractInitialized {

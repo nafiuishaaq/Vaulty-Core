@@ -1,6 +1,6 @@
 use soroban_sdk::{
     contract, contractimpl, contracttype,
-    testutils::{Address as _, Ledger},
+    testutils::{Address as _, Ledger, LedgerInfo},
     Address, BytesN, Env, Map,
 };
 use vault::{VaultContract, VaultContractClient, VaultId};
@@ -180,7 +180,7 @@ fn test_withdraw_after_lock_period() {
     TokenMock::mint(env.clone(), owner.clone(), 1000i128);
     client.deposit(&vault_id, &owner, &1000i128);
 
-    env.ledger().set(soroban_sdk::LedgerInfo {
+    env.ledger().set(LedgerInfo {
         timestamp: 100000,
         protocol_version: 20,
         sequence_number: 1234,
@@ -236,7 +236,7 @@ fn test_withdraw_insufficient_balance() {
     TokenMock::mint(env.clone(), owner.clone(), 1000i128);
     client.deposit(&vault_id, &owner, &100i128);
 
-    env.ledger().set(soroban_sdk::LedgerInfo {
+    env.ledger().set(LedgerInfo {
         timestamp: 100000,
         protocol_version: 20,
         sequence_number: 1234,
@@ -296,7 +296,7 @@ fn test_is_locked() {
     // Should be locked initially
     assert!(client.is_locked(&vault_id));
 
-    env.ledger().set(soroban_sdk::LedgerInfo {
+    env.ledger().set(LedgerInfo {
         timestamp: 100000,
         protocol_version: 20,
         sequence_number: 1234,
@@ -329,7 +329,7 @@ fn test_unlock_vault_at_exact_unlock_time() {
     let vault_id = client.create_vault(&owner, &token, &symbol, &86400u64);
 
     let unlock_time = client.get_unlock_time(&vault_id);
-    env.ledger().set(soroban_sdk::LedgerInfo {
+    env.ledger().set(LedgerInfo {
         timestamp: unlock_time,
         protocol_version: 20,
         sequence_number: 1234,
@@ -354,7 +354,7 @@ fn test_unlock_vault_after_unlock_time() {
     let vault_id = client.create_vault(&owner, &token, &symbol, &86400u64);
 
     let unlock_time = client.get_unlock_time(&vault_id);
-    env.ledger().set(soroban_sdk::LedgerInfo {
+    env.ledger().set(LedgerInfo {
         timestamp: unlock_time + 1,
         protocol_version: 20,
         sequence_number: 1234,
@@ -380,7 +380,7 @@ fn test_unlock_vault_only_once() {
     let vault_id = client.create_vault(&owner, &token, &symbol, &86400u64);
 
     let unlock_time = client.get_unlock_time(&vault_id);
-    env.ledger().set(soroban_sdk::LedgerInfo {
+    env.ledger().set(LedgerInfo {
         timestamp: unlock_time,
         protocol_version: 20,
         sequence_number: 1234,
@@ -418,7 +418,7 @@ fn test_exact_unlock_time_withdrawal() {
 
     let unlock_time = client.get_unlock_time(&vault_id);
 
-    env.ledger().set(soroban_sdk::LedgerInfo {
+    env.ledger().set(LedgerInfo {
         timestamp: unlock_time,
         protocol_version: 20,
         sequence_number: 1234,
@@ -468,7 +468,7 @@ fn test_withdraw_exact_balance_no_underflow() {
     TokenMock::mint(env.clone(), owner.clone(), 100i128);
     client.deposit(&vault_id, &owner, &100i128);
 
-    env.ledger().set(soroban_sdk::LedgerInfo {
+    env.ledger().set(LedgerInfo {
         timestamp: 100000,
         protocol_version: 20,
         sequence_number: 1234,
@@ -499,7 +499,7 @@ fn test_withdraw_at_exact_unlock_time() {
 
     let unlock_time = client.get_unlock_time(&vault_id);
 
-    env.ledger().set(soroban_sdk::LedgerInfo {
+    env.ledger().set(LedgerInfo {
         timestamp: unlock_time,
         protocol_version: 20,
         sequence_number: 1234,

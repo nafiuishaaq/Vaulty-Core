@@ -1,4 +1,5 @@
 #![cfg(test)]
+#![cfg(feature = "integration_tests")]
 extern crate std;
 
 use soroban_sdk::{

@@ -35,7 +35,8 @@ fn ghost_vault_id(env: &Env) -> VaultId {
 #[test]
 fn test_get_vault_unknown_id_returns_vault_not_found() {
     let (env, _contract_id) = setup_env();
-    let result = VaultContract::get_vault(env, ghost_vault_id(&env));
+    let vid = ghost_vault_id(&env);
+    let result = VaultContract::get_vault(env, vid);
     assert_eq!(result, Err(Error::VaultNotFound));
 }
 
@@ -47,7 +48,8 @@ fn test_get_vault_unknown_id_returns_vault_not_found() {
 #[test]
 fn test_get_balance_unknown_id_returns_vault_not_found() {
     let (env, _contract_id) = setup_env();
-    let result = VaultContract::get_balance(env, ghost_vault_id(&env));
+    let vid = ghost_vault_id(&env);
+    let result = VaultContract::get_balance(env, vid);
     assert_eq!(result, Err(Error::VaultNotFound));
 }
 
@@ -59,7 +61,8 @@ fn test_get_balance_unknown_id_returns_vault_not_found() {
 #[test]
 fn test_get_accrued_interest_unknown_id_returns_vault_not_found() {
     let (env, _contract_id) = setup_env();
-    let result = VaultContract::get_accrued_interest(env, ghost_vault_id(&env));
+    let vid = ghost_vault_id(&env);
+    let result = VaultContract::get_accrued_interest(env, vid);
     assert_eq!(result, Err(Error::VaultNotFound));
 }
 
@@ -67,7 +70,8 @@ fn test_get_accrued_interest_unknown_id_returns_vault_not_found() {
 #[test]
 fn test_get_last_accrual_time_unknown_id_returns_vault_not_found() {
     let (env, _contract_id) = setup_env();
-    let result = VaultContract::get_last_accrual_time(env, ghost_vault_id(&env));
+    let vid = ghost_vault_id(&env);
+    let result = VaultContract::get_last_accrual_time(env, vid);
     assert_eq!(result, Err(Error::VaultNotFound));
 }
 
@@ -80,7 +84,8 @@ fn test_get_last_accrual_time_unknown_id_returns_vault_not_found() {
 #[test]
 fn test_get_lock_period_unknown_id_returns_vault_not_found() {
     let (env, _contract_id) = setup_env();
-    let result = VaultContract::get_lock_period(env, ghost_vault_id(&env));
+    let vid = ghost_vault_id(&env);
+    let result = VaultContract::get_lock_period(env, vid);
     assert_eq!(result, Err(Error::VaultNotFound));
 }
 
@@ -88,7 +93,8 @@ fn test_get_lock_period_unknown_id_returns_vault_not_found() {
 #[test]
 fn test_get_unlock_time_unknown_id_returns_vault_not_found() {
     let (env, _contract_id) = setup_env();
-    let result = VaultContract::get_unlock_time(env, ghost_vault_id(&env));
+    let vid = ghost_vault_id(&env);
+    let result = VaultContract::get_unlock_time(env, vid);
     assert_eq!(result, Err(Error::VaultNotFound));
 }
 
@@ -100,7 +106,8 @@ fn test_get_unlock_time_unknown_id_returns_vault_not_found() {
 #[test]
 fn test_is_locked_unknown_id_returns_vault_not_found() {
     let (env, _contract_id) = setup_env();
-    let result = VaultContract::is_locked(env, ghost_vault_id(&env));
+    let vid = ghost_vault_id(&env);
+    let result = VaultContract::is_locked(env, vid);
     assert_eq!(result, Err(Error::VaultNotFound));
 }
 
@@ -113,12 +120,8 @@ fn test_is_locked_unknown_id_returns_vault_not_found() {
 fn test_withdraw_unknown_id_returns_vault_not_found() {
     let (env, _contract_id) = setup_env();
     let recipient = Address::generate(&env);
-    let result = VaultContract::withdraw(
-        env,
-        ghost_vault_id(&env),
-        recipient,
-        100i128,
-    );
+    let vid = ghost_vault_id(&env);
+    let result = VaultContract::withdraw(env, vid, recipient, 100i128);
     assert_eq!(result, Err(Error::VaultNotFound));
 }
 
@@ -130,7 +133,8 @@ fn test_withdraw_unknown_id_returns_vault_not_found() {
 #[test]
 fn test_lock_vault_unknown_id_returns_vault_not_found() {
     let (env, _contract_id) = setup_env();
-    let result = VaultContract::lock_vault(env, ghost_vault_id(&env));
+    let vid = ghost_vault_id(&env);
+    let result = VaultContract::lock_vault(env, vid);
     assert_eq!(result, Err(Error::VaultNotFound));
 }
 
@@ -142,7 +146,8 @@ fn test_lock_vault_unknown_id_returns_vault_not_found() {
 #[test]
 fn test_unlock_vault_unknown_id_returns_vault_not_found() {
     let (env, _contract_id) = setup_env();
-    let result = VaultContract::unlock_vault(env, ghost_vault_id(&env));
+    let vid = ghost_vault_id(&env);
+    let result = VaultContract::unlock_vault(env, vid);
     assert_eq!(result, Err(Error::VaultNotFound));
 }
 
@@ -155,8 +160,8 @@ fn test_unlock_vault_unknown_id_returns_vault_not_found() {
 #[test]
 fn test_unlock_collateral_vault_unknown_id_returns_vault_not_found() {
     let (env, _contract_id) = setup_env();
-    let result =
-        VaultContract::unlock_collateral_vault(env, ghost_vault_id(&env));
+    let vid = ghost_vault_id(&env);
+    let result = VaultContract::unlock_collateral_vault(env, vid);
     assert_eq!(result, Err(Error::VaultNotFound));
 }
 
@@ -170,11 +175,8 @@ fn test_unlock_collateral_vault_unknown_id_returns_vault_not_found() {
 fn test_transfer_vault_ownership_unknown_id_returns_vault_not_found() {
     let (env, _contract_id) = setup_env();
     let new_owner = Address::generate(&env);
-    let result = VaultContract::transfer_vault_ownership(
-        env,
-        ghost_vault_id(&env),
-        new_owner,
-    );
+    let vid = ghost_vault_id(&env);
+    let result = VaultContract::transfer_vault_ownership(env, vid, new_owner);
     assert_eq!(result, Err(Error::VaultNotFound));
 }
 
@@ -220,19 +222,19 @@ fn test_valid_vault_operations_unaffected() {
     .expect("create_vault should succeed");
 
     // All lookup operations must succeed for a vault that really exists.
-    let metadata = VaultContract::get_vault(env.clone(), vault_id)
+    let metadata = VaultContract::get_vault(env.clone(), vault_id.clone())
         .expect("get_vault should succeed for a real vault");
     assert_eq!(metadata.lock_period, lock_period);
 
-    let balance = VaultContract::get_balance(env.clone(), vault_id)
+    let balance = VaultContract::get_balance(env.clone(), vault_id.clone())
         .expect("get_balance should succeed for a real vault");
     assert_eq!(balance, 0);
 
-    let lp = VaultContract::get_lock_period(env.clone(), vault_id)
+    let lp = VaultContract::get_lock_period(env.clone(), vault_id.clone())
         .expect("get_lock_period should succeed for a real vault");
     assert_eq!(lp, lock_period);
 
-    let ut = VaultContract::get_unlock_time(env.clone(), vault_id)
+    let ut = VaultContract::get_unlock_time(env.clone(), vault_id.clone())
         .expect("get_unlock_time should succeed for a real vault");
     assert!(ut > 0);
 
