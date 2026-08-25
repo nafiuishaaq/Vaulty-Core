@@ -381,3 +381,65 @@ impl IntoVal<Env, Val> for RewardsPoolFunded {
         (self.admin.clone(), self.amount, self.total_pool).into_val(env)
     }
 }
+
+impl RewardsPoolFunded {
+    pub fn topic(env: &Env) -> (BytesN<32>, BytesN<32>) {
+        (
+            BytesN::from_array(env, &[10u8; 32]),
+            BytesN::from_array(env, &[16u8; 32]),
+        )
+    }
+}
+
+/// Event emitted when a contract is initialized with an administrator
+#[contracttype]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContractInitialized {
+    pub admin: Address,
+    pub timestamp: u64,
+}
+
+impl ContractInitialized {
+    pub fn topic(env: &Env) -> (BytesN<32>, BytesN<32>) {
+        (
+            BytesN::from_array(env, &[60u8; 32]),
+            BytesN::from_array(env, &[61u8; 32]),
+        )
+    }
+}
+
+/// Event emitted when admin transfer is initiated (two-step transfer)
+#[contracttype]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdminTransferPending {
+    pub current_admin: Address,
+    pub proposed_admin: Address,
+    pub timestamp: u64,
+}
+
+impl AdminTransferPending {
+    pub fn topic(env: &Env) -> (BytesN<32>, BytesN<32>) {
+        (
+            BytesN::from_array(env, &[62u8; 32]),
+            BytesN::from_array(env, &[63u8; 32]),
+        )
+    }
+}
+
+/// Event emitted when admin transfer is completed
+#[contracttype]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdminTransferred {
+    pub previous_admin: Address,
+    pub new_admin: Address,
+    pub timestamp: u64,
+}
+
+impl AdminTransferred {
+    pub fn topic(env: &Env) -> (BytesN<32>, BytesN<32>) {
+        (
+            BytesN::from_array(env, &[64u8; 32]),
+            BytesN::from_array(env, &[65u8; 32]),
+        )
+    }
+}

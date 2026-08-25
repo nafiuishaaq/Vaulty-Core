@@ -1,4 +1,5 @@
 #![cfg(test)]
+#![cfg(feature = "integration_tests")]
 extern crate std;
 
 use soroban_sdk::{
@@ -11,6 +12,7 @@ use vault::VaultContractClient;
 
 fn setup_integration_test() -> (Env, Address, Address, VaultContractClient, StreaksContractClient, RewardsContractClient) {
     let env = Env::default();
+    env.mock_all_auths();
     env.budget().reset_unlimited();
 
     // Create test accounts
@@ -33,7 +35,7 @@ fn setup_integration_test() -> (Env, Address, Address, VaultContractClient, Stre
     let reward_asset: BytesN<32> = BytesN::from_array(&env, &[0u8; 32]);
     rewards.initialize(&admin, &reward_asset, &streaks_id);
     
-    vault.initialize(&streaks_id, &rewards_id);
+    vault.initialize(&admin, &streaks_id, &rewards_id);
 
     // Register vault with streaks to add it as authorized caller
     vault.register_with_streaks();

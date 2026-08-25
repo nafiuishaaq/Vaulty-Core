@@ -2,7 +2,10 @@
 use soroban_sdk::{contract, contractimpl, contracttype, Address, BytesN, Env, Map, Vec};
 use shared::{
     errors::Error,
-    events::{MilestoneReached, RewardClaimed, RewardGranted, RewardsPoolFunded},
+    events::{
+        AdminTransferPending, AdminTransferred, ContractInitialized,
+        MilestoneReached, RewardClaimed, RewardGranted, RewardsPoolFunded,
+    },
     types::{Milestone, RewardsPool, UserReward, RateLimit, Permission, Role},
     utils::{TimeHelper, ValidationHelper},
 };
@@ -27,6 +30,7 @@ pub enum RewardsKey {
     RateLimit,
     RewardPool,
     RewardConfig,
+    PendingAdmin,
 }
 
 // Storage key constants
@@ -42,12 +46,26 @@ const MILESTONE_365_DAYS: u32 = 365;
 
 #[contractimpl]
 impl RewardsContract {
+    /// Initialize the rewards pool with an administrator and funding.
+    ///
+    /// Can only be called once. The caller becomes the pool administrator.
+    ///
+    /// # Auth
+    /// Requires authorization from the deployer (initial admin).
     pub fn initialize_rewards(
         env: Env,
         admin: Address,
         total_pool: i128,
         reward_asset: BytesN<32>,
     ) -> Result<(), Error> {
+        // Prevent double initialization
+        let pool_key = BytesN::from_array(&env, REWARDS_POOL_KEY);
+        if env.storage().instance().has(&pool_key) {
+            return Err(Error::AlreadyInitialized);
+        }
+
+        admin.require_auth();
+
         if !ValidationHelper::validate_positive_amount(total_pool) {
             return Err(Error::InvalidAmount);
         }
@@ -57,12 +75,24 @@ impl RewardsContract {
             available_liquidity: total_pool,
             reward_asset,
             initialized: true,
-            admin,
+            admin: admin.clone(),
         };
 
         env.storage()
             .persistent()
             .set(&RewardsKey::RewardPool, &reward_pool);
+
+        // Mark initialized in instance storage so double-init is detected
+        let pool_key = BytesN::from_array(&env, REWARDS_POOL_KEY);
+        env.storage().instance().set(&pool_key, &reward_pool);
+
+        env.events().publish(
+            ContractInitialized::topic(&env),
+            ContractInitialized {
+                admin,
+                timestamp: TimeHelper::now(&env),
+            },
+        );
 
         Ok(())
     }
@@ -100,7 +130,14 @@ impl RewardsContract {
         Ok(())
     }
 
+    /// Grant admin permission.
+    ///
+    /// # Auth
+    /// Requires authorization from the current contract administrator.
     pub fn grant_admin(env: Env, admin: Address) -> Result<(), Error> {
+        let contract_admin: Address = Self::get_rewards_pool(&env).admin;
+        contract_admin.require_auth();
+
         let permission = Permission {
             role: Role::Admin,
             granted_at: TimeHelper::now(&env),
@@ -124,6 +161,65 @@ impl RewardsContract {
         }
     }
 
+    /// Initiate a two-step administrator transfer.
+    ///
+    /// # Auth
+    /// Requires authorization from the current contract administrator.
+    pub fn transfer_admin(env: Env, proposed_admin: Address) -> Result<(), Error> {
+        let pool = Self::get_rewards_pool(&env);
+        pool.admin.require_auth();
+
+        if pool.admin == proposed_admin {
+            return Err(Error::CannotTransferToSelf);
+        }
+
+        env.storage()
+            .persistent()
+            .set(&RewardsKey::PendingAdmin, &proposed_admin);
+
+        env.events().publish(
+            AdminTransferPending::topic(&env),
+            AdminTransferPending {
+                current_admin: pool.admin,
+                proposed_admin,
+                timestamp: TimeHelper::now(&env),
+            },
+        );
+
+        Ok(())
+    }
+
+    /// Accept an administrator transfer.
+    ///
+    /// # Auth
+    /// Requires authorization from the proposed administrator.
+    pub fn accept_admin(env: Env) -> Result<(), Error> {
+        let proposed_admin: Address = env
+            .storage()
+            .persistent()
+            .get(&RewardsKey::PendingAdmin)
+            .ok_or(Error::NoAdminTransferPending)?;
+        proposed_admin.require_auth();
+
+        let mut pool = Self::get_rewards_pool(&env);
+        let previous_admin = pool.admin.clone();
+
+        pool.admin = proposed_admin.clone();
+        Self::set_rewards_pool(&env, pool);
+        env.storage().persistent().remove(&RewardsKey::PendingAdmin);
+
+        env.events().publish(
+            AdminTransferred::topic(&env),
+            AdminTransferred {
+                previous_admin,
+                new_admin: proposed_admin,
+                timestamp: TimeHelper::now(&env),
+            },
+        );
+
+        Ok(())
+    }
+
     pub fn get_claim_history(env: Env, user: Address) -> Result<Vec<BytesN<32>>, Error> {
         let history: Vec<BytesN<32>> = env
             .storage()
@@ -142,14 +238,20 @@ impl RewardsContract {
         Ok(count)
     }
 
-    /// Initialize the rewards system with admin and reward asset
-    /// Can only be called once
-    pub fn initialize(env: Env, admin: Address, reward_asset: BytesN<32>, streaks_contract: Address) {
+    /// Initialize the rewards system with admin and reward asset.
+    ///
+    /// Can only be called once. The caller becomes the pool administrator.
+    ///
+    /// # Auth
+    /// Requires authorization from the deployer (initial admin).
+    pub fn initialize(env: Env, admin: Address, reward_asset: BytesN<32>, streaks_contract: Address) -> Result<(), Error> {
         // Check if already initialized
         let pool_key = BytesN::from_array(&env, REWARDS_POOL_KEY);
         if env.storage().instance().has(&pool_key) {
-            panic!("{:?}", Error::AlreadyInitialized);
+            return Err(Error::AlreadyInitialized);
         }
+
+        admin.require_auth();
 
         // Store streaks contract address
         let streaks_key = BytesN::from_array(&env, STREAKS_CONTRACT_KEY);
@@ -161,18 +263,36 @@ impl RewardsContract {
             available_liquidity: 0,
             reward_asset,
             initialized: true,
-            admin,
+            admin: admin.clone(),
         };
         env.storage().instance().set(&pool_key, &pool);
 
         // Register default milestones
         Self::register_default_milestones(&env);
+
+        // Store admin in persistent storage for admin rotation support
+        env.storage().persistent().set(&RewardsKey::Admin, &admin);
+
+        env.events().publish(
+            ContractInitialized::topic(&env),
+            ContractInitialized {
+                admin,
+                timestamp: TimeHelper::now(&env),
+            },
+        );
+
+        Ok(())
     }
 
     /// Fund the rewards pool with additional tokens
-    /// Only admin can call this
+    ///
+    /// # Auth
+    /// Requires authorization from the contract administrator.
     pub fn fund_rewards_pool(env: Env, amount: i128) {
         let mut pool = Self::get_rewards_pool(&env);
+
+        // Require admin authorization
+        pool.admin.require_auth();
 
         // Validate amount
         if amount <= 0 {
@@ -331,9 +451,13 @@ impl RewardsContract {
         }
     }
 
-    /// Add a new milestone (admin only)
+    /// Add a new milestone.
+    ///
+    /// # Auth
+    /// Requires authorization from the contract administrator.
     pub fn add_milestone(env: Env, threshold: u32, reward_amount: i128, reward_type: u32) {
-        let _pool = Self::get_rewards_pool(&env);
+        let pool = Self::get_rewards_pool(&env);
+        pool.admin.require_auth();
 
         let mut milestones = Self::get_milestones(&env);
         milestones.push_back(Milestone {

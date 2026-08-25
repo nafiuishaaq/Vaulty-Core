@@ -2,7 +2,8 @@
 use soroban_sdk::{contract, contractimpl, contracttype, Address, BytesN, Env};
 use shared::errors::Error;
 use shared::events::{
-    BorrowingContractInitialized, InterestAccrued, PoolAccountingUpdated, PoolCreated,
+    AdminTransferPending, AdminTransferred, BorrowingContractInitialized,
+    ContractInitialized, InterestAccrued, PoolAccountingUpdated, PoolCreated,
     PoolDeposit, PoolWithdrawal,
 };
 use shared::types::{
@@ -29,6 +30,8 @@ pub enum PoolKey {
     AdminPermissions(Address),
     PoolStatus(BytesN<32>),
     BorrowingContract(BytesN<32>),
+    ContractAdmin,
+    PendingAdmin,
 }
 
 /// Lending contract for managing lending pools and interest.
@@ -40,13 +43,124 @@ pub use LendingContract;
 
 #[contractimpl]
 impl LendingContract {
+    /// Initialize the lending contract with an administrator.
+    ///
+    /// Can only be called once. The caller becomes the contract administrator
+    /// who governs pool creation and admin grants.
+    ///
+    /// # Auth
+    /// Requires authorization from the deployer (initial admin).
+    pub fn initialize(env: Env, admin: Address) -> Result<(), Error> {
+        if env.storage().persistent().has(&PoolKey::ContractAdmin) {
+            return Err(Error::AlreadyInitialized);
+        }
+
+        admin.require_auth();
+
+        env.storage().persistent().set(&PoolKey::ContractAdmin, &admin);
+
+        env.events().publish(
+            ContractInitialized::topic(&env),
+            ContractInitialized {
+                admin,
+                timestamp: TimeHelper::now(&env),
+            },
+        );
+
+        Ok(())
+    }
+
+    /// Get the current contract administrator
+    pub fn get_contract_admin(env: Env) -> Result<Address, Error> {
+        env.storage()
+            .persistent()
+            .get(&PoolKey::ContractAdmin)
+            .ok_or(Error::NotInitialized)
+    }
+
+    /// Initiate a two-step administrator transfer.
+    ///
+    /// # Auth
+    /// Requires authorization from the current administrator.
+    pub fn transfer_admin(env: Env, proposed_admin: Address) -> Result<(), Error> {
+        let current_admin: Address = env
+            .storage()
+            .persistent()
+            .get(&PoolKey::ContractAdmin)
+            .ok_or(Error::NotInitialized)?;
+        current_admin.require_auth();
+
+        if current_admin == proposed_admin {
+            return Err(Error::CannotTransferToSelf);
+        }
+
+        env.storage()
+            .persistent()
+            .set(&PoolKey::PendingAdmin, &proposed_admin);
+
+        env.events().publish(
+            AdminTransferPending::topic(&env),
+            AdminTransferPending {
+                current_admin,
+                proposed_admin,
+                timestamp: TimeHelper::now(&env),
+            },
+        );
+
+        Ok(())
+    }
+
+    /// Accept an administrator transfer.
+    ///
+    /// # Auth
+    /// Requires authorization from the proposed administrator.
+    pub fn accept_admin(env: Env) -> Result<(), Error> {
+        let proposed_admin: Address = env
+            .storage()
+            .persistent()
+            .get(&PoolKey::PendingAdmin)
+            .ok_or(Error::NoAdminTransferPending)?;
+        proposed_admin.require_auth();
+
+        let previous_admin: Address = env
+            .storage()
+            .persistent()
+            .get(&PoolKey::ContractAdmin)
+            .ok_or(Error::NotInitialized)?;
+
+        env.storage().persistent().set(&PoolKey::ContractAdmin, &proposed_admin);
+        env.storage().persistent().remove(&PoolKey::PendingAdmin);
+
+        env.events().publish(
+            AdminTransferred::topic(&env),
+            AdminTransferred {
+                previous_admin,
+                new_admin: proposed_admin,
+                timestamp: TimeHelper::now(&env),
+            },
+        );
+
+        Ok(())
+    }
+
     /// Create a new lending pool for a specific asset
+    ///
+    /// # Auth
+    /// Requires authorization from the contract administrator.
     pub fn create_pool(
         env: Env,
         admin: Address,
         asset: BytesN<32>,
         interest_rate_bps: i128,
     ) -> Result<(), Error> {
+        // Require contract administrator authorization
+        let contract_admin: Address = env
+            .storage()
+            .persistent()
+            .get(&PoolKey::ContractAdmin)
+            .ok_or(Error::NotInitialized)?;
+        contract_admin.require_auth();
+
         if !ValidationHelper::validate_interest_rate(interest_rate_bps) {
             return Err(Error::InvalidInterestRate);
         }
@@ -629,12 +743,22 @@ impl LendingContract {
     }
 
     /// Set rate limit for a pool
+    ///
+    /// # Auth
+    /// Requires authorization from the contract administrator.
     pub fn set_rate_limit(
         env: Env,
         pool_id: BytesN<32>,
         max_ops: u64,
         period_seconds: u64,
     ) -> Result<(), Error> {
+        let contract_admin: Address = env
+            .storage()
+            .persistent()
+            .get(&PoolKey::ContractAdmin)
+            .ok_or(Error::NotInitialized)?;
+        contract_admin.require_auth();
+
         let rate_limit = RateLimit::new(max_ops, period_seconds);
         env.storage()
             .persistent()
@@ -673,7 +797,17 @@ impl LendingContract {
     }
 
     /// Grant admin permission
+    ///
+    /// # Auth
+    /// Requires authorization from the contract administrator.
     pub fn grant_admin(env: Env, admin: Address) -> Result<(), Error> {
+        let contract_admin: Address = env
+            .storage()
+            .persistent()
+            .get(&PoolKey::ContractAdmin)
+            .ok_or(Error::NotInitialized)?;
+        contract_admin.require_auth();
+
         let permission = shared::types::Permission {
             role: Role::Admin,
             granted_at: TimeHelper::now(&env),
