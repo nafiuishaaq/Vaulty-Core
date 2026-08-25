@@ -13,7 +13,6 @@ pub enum Error {
     InvalidLockPeriod = 6,
     Overflow = 7,
     Underflow = 8,
-    InvalidAsset = 9,
     AlreadyInitialized = 10,
     NotInitialized = 11,
     InvalidTimestamp = 12,
@@ -30,15 +29,12 @@ pub enum Error {
     InvalidShareAmount = 23,
     PoolPaused = 24,
     PoolClosed = 25,
-    ZeroShares = 26,
     InsufficientShares = 27,
-    InvalidReserveFactor = 28,
     RateLimitExceeded = 29,
     EmergencyStopActive = 30,
     PermissionDenied = 31,
     LoanAlreadyExists = 32,
     InvalidCollateral = 33,
-    CollateralRatioTooLow = 34,
     FlashLoanNotAllowed = 35,
     CooldownPeriodNotMet = 36,
     InvalidTimestampRange = 37,
@@ -59,4 +55,3 @@ pub enum Error {
     NoAdminTransferPending = 52,
     CannotTransferToSelf = 53,
 }
-
