@@ -14,6 +14,13 @@ pub enum StreakKey {
 /// Initial number of freezes granted to every new streak.
 pub const INITIAL_FREEZES: u32 = 3;
 
+/// Maximum number of freezes a user may hold at once.
+///
+/// Caps `add_freezes` to keep freeze accumulation from undermining the
+/// streak discipline mechanic. Manual consumption via `use_freeze` and
+/// `update_streak` is unaffected by this cap.
+pub const MAX_FREEZES: u32 = 10;
+
 pub struct State;
 
 impl State {
