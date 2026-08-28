@@ -18,3 +18,6 @@ soroban-sdk = { workspace = true, features = ["testutils"] }
 # `cfg(test)` is false; the self dev-dependency builds it with `testutils` so
 # `LendingContract` implements `ContractFunctionSet`.
 lending = { path = ".", features = ["testutils"] }
+# soroban-env-host 21.x requires ed25519-dalek >=2.0.0; v3.0.0 pulls in
+# rand_core 0.10 which is incompatible with soroban's rand 0.8 test utils.
+ed25519-dalek = { workspace = true }

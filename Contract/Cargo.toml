@@ -5,6 +5,8 @@ members = [
     "streaks",
     "rewards",
     "shared",
+    "lending",
+    "borrowing",
 ]
 
 [workspace.package]
@@ -17,6 +19,8 @@ shared = { path = "shared" }
 vault = { path = "vault" }
 streaks = { path = "streaks" }
 rewards = { path = "rewards" }
+lending = { path = "lending" }
+borrowing = { path = "borrowing" }
 # soroban-env-host 21.x requires ed25519-dalek >=2.0.0; v3.0.0 pulls in
 # rand_core 0.10 which is incompatible with soroban's rand 0.8 test utils.
 ed25519-dalek = "=2.2.0"
